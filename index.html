@@ -139,6 +139,14 @@ textarea#script[readonly]{opacity:.6}
 .row .tx{font-size:16px;line-height:1.75}
 .row .tx mark{background:none;color:var(--tally);text-decoration:underline wavy var(--tally);text-underline-offset:4px}
 .row .tags{grid-column:2;display:flex;flex-wrap:wrap;gap:6px}
+.row .sk{grid-column:2;min-width:0}
+.spark{display:block;width:100%;height:40px;background:var(--sunk);border-radius:6px}
+.spark .sk-line{fill:none;stroke:var(--ink);stroke-width:1.5;vector-effect:non-scaling-stroke;opacity:.8}
+.spark .sk-thr{stroke:var(--muted);stroke-dasharray:4 4;vector-effect:non-scaling-stroke;opacity:.6}
+.spark .sk-st{fill:var(--cue);opacity:.28}
+.spark .sk-gap{fill:var(--tally)}
+.copy.voice .c{opacity:.45;transition:opacity .3s,color .25s}
+.copy.voice .c.cs{opacity:1}
 .okline{font-size:13px;color:var(--muted);border-top:1px solid var(--line);padding-top:10px}
 .ex{font-size:11px;font-weight:700;letter-spacing:.1em;color:var(--cue);border:1px solid var(--cue);border-radius:4px;padding:0 5px;margin-left:8px;vertical-align:2px}
 .caveat{font-size:12px;color:var(--muted);margin:0}
@@ -266,7 +274,8 @@ const framed = (() => { try { return window.self !== window.top; } catch(e){ ret
 const SRClass = window.SpeechRecognition || window.webkitSpeechRecognition;
 const isIOS = /iP(hone|ad|od)/.test(navigator.userAgent) || (navigator.platform === 'MacIntel' && navigator.maxTouchPoints > 1);
 
-const st = Object.assign({ cpm:250, fs:44, mirror:false, level:0, follow:'auto', rec:true }, store.get('kb.prefs', {}));
+const st = Object.assign({ cpm:250, fs:44, mirror:false, level:0, follow: (SRClass && !framed) ? 'voice' : 'auto', rec:true }, store.get('kb.prefs', {}));
+const AC = window.AudioContext || window.webkitAudioContext;
 let takes = store.get('kb.takes', []);
 const scriptEl = $('#script');
 scriptEl.value = store.get('kb.script', SEED);
@@ -359,7 +368,15 @@ function sizeVP(){
 }
 
 /* ---------- cursor ---------- */
-let cursor = 0, shown = 0, curEl = null;
+let cursor = 0, shown = 0, curEl = null, curSent = -1;
+function sampleLevel(t){
+  const m = t.meter; let sum = 0;
+  if (m.an.getFloatTimeDomainData){ m.an.getFloatTimeDomainData(m.buf); for (let i = 0; i < m.buf.length; i++) sum += m.buf[i] * m.buf[i]; }
+  else { m.an.getByteTimeDomainData(m.b8); for (let i = 0; i < m.b8.length; i++){ const v = (m.b8[i] - 128) / 128; sum += v * v; } }
+  const db = 20 * Math.log10(Math.sqrt(sum / m.buf.length) + 1e-6);
+  const last = t.env[t.env.length - 1];
+  if (!last || elapsed - last.t >= .025) t.env.push({ t: elapsed, db });
+}
 let tReach = [];
 function paintCursor(force){
   const f = Math.min(R.length, Math.floor(cursor + 1e-6));
@@ -368,6 +385,14 @@ function paintCursor(force){
   else if (f < shown){ for (let i = f; i < shown; i++) els[i].classList.remove('rd'); }
   if (running && take){ for (let i = shown; i < f; i++) if (tReach[i] == null) tReach[i] = elapsed; }
   shown = f;
+  if (running && take && take.mode === 'voice' && R.length){
+    const s = R[Math.min(f, R.length - 1)].sent;
+    if (s !== curSent){
+      if (curSent >= 0) for (let i = sentences[curSent].a; i <= sentences[curSent].b; i++) els[i].classList.remove('cs');
+      for (let i = sentences[s].a; i <= sentences[s].b; i++) els[i].classList.add('cs');
+      curSent = s;
+    }
+  }
   const ce = els[Math.min(f, els.length - 1)] || null;
   if (curEl !== ce){ curEl && curEl.classList.remove('cur'); ce && running && ce.classList.add('cur'); curEl = ce; }
 }
@@ -387,6 +412,7 @@ function loop(ts){
   if (running && !paused){
     elapsed += dt;
     if (take.mode === 'auto') advance(dt);
+    if (take.meter) sampleLevel(take);
     paintCursor();
     vp.scrollTop += (targetScroll() - vp.scrollTop) * Math.min(1, dt * 5);
     if (take.mode === 'auto' && cursor >= R.length) { if ((take.endWait = (take.endWait || 0) + dt) > 1) finish(); }
@@ -418,7 +444,8 @@ async function onGo(){
   const startRi = sentences[R[Math.min(Math.floor(cursor), R.length - 1)].sent].a;
   cursor = startRi; frac = 0; hold = 0;
   let wantVoice = st.follow === 'voice' && !!SRClass, wantRec = st.rec;
-  let stream = null;
+  let stream = null, actx = null;
+  if (wantVoice && AC){ try { actx = new AC(); } catch(e){ actx = null; } } // created inside the tap so iOS lets it run
   if (wantVoice || wantRec){
     try {
       if (!navigator.mediaDevices || !navigator.mediaDevices.getUserMedia) throw new Error('nomedia');
@@ -431,8 +458,18 @@ async function onGo(){
   take = { mode: wantVoice ? 'voice' : 'auto', startRi, level: st.level, target: st.cpm, endWait: 0 };
   // reset visuals
   els.forEach(e => e.classList.remove('miss'));
-  if (stream && !wantRec){ stream.getTracks().forEach(x => x.stop()); stream = null; } // voice-only: the recognizer opens its own mic
-  tReach = []; events = []; finalsAll = ''; committed = startRi; matchedTotal = 0; sess = null; sr = null;
+  take.env = []; take.meter = null;
+  if (actx && stream && take.mode === 'voice'){
+    try {
+      const an = actx.createAnalyser(); an.fftSize = 1024;
+      actx.createMediaStreamSource(stream).connect(an);
+      take.meter = { ctx: actx, an, buf: new Float32Array(an.fftSize), b8: new Uint8Array(an.fftSize) };
+      actx.resume && actx.resume();
+    } catch(e){ take.meter = null; }
+  } else if (actx){ try { actx.close(); } catch(e){} }
+  if (stream && !wantRec && !take.meter){ stream.getTracks().forEach(x => x.stop()); stream = null; }
+  tReach = []; events = []; finalsAll = ''; committed = startRi; matchedTotal = 0; sess = null; sr = null; curSent = -1;
+  copy.classList.toggle('voice', take.mode === 'voice');
   paintCursor(true);
   copy.classList.remove('idle');
   scriptEl.readOnly = true;
@@ -593,6 +630,8 @@ async function finish(){
   recorder = null;
   if (t.stream) t.stream.getTracks().forEach(x => x.stop());
   releaseWake();
+  if (t.meter){ try { t.meter.ctx.close(); } catch(e){} }
+  copy.classList.remove('voice'); els.forEach(e => e.classList.remove('cs'));
   const end = t.mode === 'voice' ? Math.min(R.length, committed) : Math.min(R.length, Math.floor(cursor));
   const n = zi(t.startRi, end);
   let speed;
@@ -630,8 +669,119 @@ function fillers(said, script){
   }
   return out.sort((a, b) => b.n - a.n);
 }
+/* Loudness analysis: pauses (断句), stressed words (重音) and sentence tails.
+   Recognition tells us roughly when each character was heard; the loudness trace tells us when sound actually happened.
+   We estimate the recognizer's delay from sentence onsets, then map pauses and stressed words onto the trace. */
+function analyseAudio(t, end){
+  const env = t.env;
+  if (!env || env.length < 60) return null;
+  const sorted = env.map(e => e.db).sort((a, b) => a - b);
+  const q = p => sorted[Math.floor(p * (sorted.length - 1))];
+  const floor = q(.1), top = q(.95);
+  if (top - floor < 10) return null;
+  const thr = floor + Math.max(6, (top - floor) * .3);
+  const sil = []; let s0 = null;
+  for (const e of env){
+    if (e.db < thr){ if (s0 == null) s0 = e.t; }
+    else { if (s0 != null && e.t - s0 >= .28) sil.push({ t0: s0, t1: e.t }); s0 = null; }
+  }
+  // spread characters heard in one burst across the time just before it
+  const times = new Array(R.length).fill(null);
+  let i = t.startRi, prevT = null;
+  while (i < end){
+    if (tReach[i] == null){ i++; continue; }
+    let j = i; while (j + 1 < end && tReach[j+1] === tReach[i]) j++;
+    const k = j - i + 1, T = tReach[i];
+    const span = Math.min(prevT == null ? k * .22 : T - prevT, k * .3);
+    for (let x = 0; x < k; x++) times[i + x] = T - span + (x + 1) / k * span;
+    prevT = T; i = j + 1;
+  }
+  const lats = [];
+  for (const s of sentences){
+    if (s.a < t.startRi || s.a >= end || times[s.a] == null) continue;
+    const on = sil.filter(z => z.t1 <= times[s.a] + .1 && z.t1 >= times[s.a] - 2.5).pop();
+    if (on) lats.push(times[s.a] - on.t1);
+  }
+  lats.sort((a, b) => a - b);
+  const L = lats.length ? Math.max(0, Math.min(2, lats[Math.floor(lats.length / 2)])) : .5;
+  const at = i => times[i] == null ? null : times[i] - L;
+  const voicedIn = (a, b) => env.filter(e => e.t >= a && e.t <= b && e.db >= thr).map(e => e.db);
+  const median = arr => { if (!arr.length) return null; const s = arr.slice().sort((a, b) => a - b); return s[Math.floor(s.length / 2)]; };
+  const mean = arr => arr.length ? arr.reduce((a, b) => a + b, 0) / arr.length : null;
+  // which character each pause follows
+  const firstT = at(t.startRi), lastT = at(Math.max(t.startRi, end - 1));
+  const pauses = [];
+  for (const z of sil){
+    if (firstT == null || z.t0 < firstT || (lastT != null && z.t0 > lastT)) continue;
+    let after = -1;
+    for (let k = t.startRi; k < end; k++){ const a = at(k); if (a != null && a <= z.t0 + .15) after = k; }
+    if (after >= 0) pauses.push({ ...z, d: z.t1 - z.t0, after });
+  }
+  return { env, thr, floor, top, sil, pauses, at, voicedIn, median, mean };
+}
+function sentAudioTags(aa, s, end, isFirst, target){
+  const tags = [], marks = [];
+  const a0 = aa.at(s.a), a1 = aa.at(Math.min(s.b, end - 1));
+  if (a0 == null || a1 == null) return { tags, marks };
+  // where the sound of this sentence starts and stops, taken from the loudness trace
+  const before = aa.sil.filter(z => z.t1 <= a0 + .35 && z.t1 >= a0 - 1.8).pop();
+  const after = aa.sil.find(z => z.t0 >= a1 - .35 && z.t0 <= a1 + 1.8);
+  const n = zi(s.a, s.b + 1);
+  if (before && after && n >= 7){
+    const sp = n / Math.max(.5, after.t0 - before.t1) * 60, r = sp / target;
+    if (r > 1.22) tags.push({ c: 'warn', t: `偏快 ${Math.round(sp)} 字/分` });
+    else if (r < .72) tags.push({ c: 'warn', t: `偏慢 ${Math.round(sp)} 字/分` });
+  }
+  if (!isFirst && before && before.t1 - before.t0 > 2.4) tags.push({ c: 'warn', t: `开口前停了 ${(before.t1 - before.t0).toFixed(1)} 秒` });
+  // wrong breaks: a pause with no punctuation or / mark nearby (timing is only good to a few characters)
+  const bad = aa.pauses.filter(p => p.after >= s.a + 1 && p.after < Math.min(s.b, end - 1) - 1 && p.d >= .35 && !hasMark(p.after - 3, p.after + 3));
+  for (const p of bad.slice(0, 2)) tags.push({ c: 'warn', t: `断在「${origText(Math.max(s.a, p.after - 3), p.after + 1)}|${origText(p.after + 1, Math.min(s.b + 1, p.after + 4))}」附近，停了 ${p.d.toFixed(1)} 秒` });
+  if (bad.length >= 2) tags.push({ c: 'bad', t: `这句断了 ${bad.length + 1} 截，不够连贯` });
+  // a full stop that was run straight into the next sentence
+  if (R[s.b].pause >= .5 && s.b < end - 1 && !aa.pauses.some(p => Math.abs(p.after - s.b) <= 2)) tags.push({ c: 'warn', t: '句末没停顿，和下一句连在一起了' });
+  // stressed words
+  const sentMed = aa.median(aa.voicedIn(a0 - .1, a1 + .2));
+  if (sentMed != null){
+    let k = s.a;
+    while (k <= Math.min(s.b, end - 1)){
+      if (!R[k].stress){ k++; continue; }
+      let j = k; while (j + 1 <= Math.min(s.b, end - 1) && R[j+1].stress) j++;
+      const w0 = aa.at(k), w1 = aa.at(j);
+      const vv = w0 != null && w1 != null ? aa.voicedIn(w0 - .15, w1 + .2) : [];
+      const m = vv.length >= 3 ? aa.median(vv) : null;
+      if (m != null){
+        const d = m - sentMed, word = origText(k, j + 1);
+        if (d >= 3) tags.push({ c: 'good', t: `重音「${word}」到位，比整句响 ${d.toFixed(0)} dB` });
+        else if (d >= 1.5) tags.push({ c: 'warn', t: `重音「${word}」稍弱，只响了 ${d.toFixed(1)} dB` });
+        else tags.push({ c: 'bad', t: `重音「${word}」没咬出来，和前后差不多响` });
+        marks.push([w0 - .15, w1 + .2]);
+      }
+      k = j + 1;
+    }
+    // dropped tail: last two characters much quieter than the sentence
+    if (s.b < end && s.b - s.a >= 5){
+      const t0 = aa.at(s.b - 1), t1 = aa.at(s.b);
+      const tv = t0 != null && t1 != null ? aa.voicedIn(t0 - .1, t1 + .25) : [];
+      const tail = tv.length >= 3 ? aa.median(tv) : null;
+      if (tail != null && tail - sentMed < -9) tags.push({ c: 'warn', t: `句尾音量掉了 ${Math.abs(tail - sentMed).toFixed(0)} dB，留意气息和尾字` });
+    }
+  }
+  return { tags, marks, spark: spark(aa, a0 - .3, a1 + .5, marks) };
+}
+function hasMark(a, b){ for (let k = Math.max(0, a); k <= b && k < R.length; k++) if (R[k].pause > 0) return true; return false; }
+function spark(aa, t0, t1, marks){
+  const pts = aa.env.filter(e => e.t >= t0 && e.t <= t1);
+  if (pts.length < 6) return '';
+  const W = 600, H = 40, x = t => ((t - t0) / (t1 - t0) * W).toFixed(1);
+  const y = db => (H - 2 - Math.max(0, Math.min(1, (db - aa.floor) / (aa.top - aa.floor + 1e-6))) * (H - 6)).toFixed(1);
+  const d = 'M' + pts.map(e => x(e.t) + ',' + y(e.db)).join('L');
+  const rects = marks.map(([a, b]) => `<rect x="${x(a)}" y="0" width="${Math.max(2, x(b) - x(a))}" height="${H}" class="sk-st"/>`).join('');
+  const gaps = aa.sil.filter(z => z.t1 > t0 && z.t0 < t1 && z.t1 - z.t0 >= .35).map(z => `<rect x="${x(Math.max(t0, z.t0))}" y="${H - 3}" width="${Math.max(2, x(Math.min(t1, z.t1)) - x(Math.max(t0, z.t0)))}" height="3" class="sk-gap"/>`).join('');
+  return `<svg class="spark" viewBox="0 0 ${W} ${H}" preserveAspectRatio="none" aria-hidden="true">${rects}<line x1="0" x2="${W}" y1="${y(aa.thr)}" y2="${y(aa.thr)}" class="sk-thr"/><path d="${d}" class="sk-line"/>${gaps}</svg>`;
+}
 function buildReport(t, end, rec, fill){
   const rows = [];
+  const aa = analyseAudio(t, end);
   const subs = events.filter(e => (e.a < e.b || (e.said && norm(e.said))) && !numberish(e));
   sentences.forEach((s, si) => {
     if (s.b < t.startRi || s.a >= Math.max(end, t.startRi + 1)) return;
@@ -649,6 +799,12 @@ function buildReport(t, end, rec, fill){
     if (s.a < end && s.b >= end) { tags.push({ c: 'warn', t: '这句没念完' }); for (let k = end; k <= s.b; k++) marks.add(k); }
     const ta = tReach[s.a], tb = tReach[Math.min(s.b, end - 1)];
     const n = zi(s.a, s.b + 1);
+    if (aa){
+      const x = sentAudioTags(aa, s, end, si === sentences.findIndex(z => z.b >= t.startRi), t.target);
+      tags.push(...x.tags);
+      rows.push({ no: si + 1, s, marks, tags, spark: x.spark || '' });
+      return;
+    }
     if (ta != null && tb != null && n >= 7 && tb > ta){
       const sp = n / (tb - ta + .35) * 60, r = sp / t.target;
       if (r > 1.22) tags.push({ c: 'warn', t: `偏快 ${Math.round(sp)} 字/分` });
@@ -663,11 +819,11 @@ function buildReport(t, end, rec, fill){
       if (tReach[i] != null && tReach[i-1] != null && R[i-1].pause < .4) gap = Math.max(gap, tReach[i] - tReach[i-1]);
     }
     if (gap > 2) tags.push({ c: 'warn', t: `句中卡了约 ${gap.toFixed(1)} 秒` });
-    rows.push({ no: si + 1, s, marks, tags });
+    rows.push({ no: si + 1, s, marks, tags, spark: '' });
   });
   const reps = []; const re = /(\p{Script=Han}{2,6})\1/gu; let m;
   while ((m = re.exec(finalsAll.replace(/\s/g, '')))) if (!S.includes(m[0])) reps.push(m[1]);
-  return { rows, reps };
+  return { rows, reps, audio: !!aa };
 }
 function cleanFiller(s){ let x = norm(s); for (const w of FILLERS) x = x.split(w).join(''); return x; }
 function origText(a, b){ let out = ''; for (let i = a; i < b; i++) out += T[R[i].ti].ch; return out; }
@@ -697,14 +853,22 @@ function summaryPills(rec, extra){
 }
 function renderReport(rep, rec, audio){
   const bad = rep.rows.filter(r => r.tags.length), good = rep.rows.length - bad.length;
-  const reps = rep.reps.length ? `<span class="pill warn">重复了：${esc(rep.reps.slice(0, 4).join('、'))}</span>` : '';
+  const all = rep.rows.flatMap(r => r.tags);
+  const breaks = all.filter(x => x.t.startsWith('断在')).length;
+  const stress = all.filter(x => x.t.startsWith('重音')), stressOk = stress.filter(x => x.c === 'good').length;
+  let reps = rep.reps.length ? `<span class="pill warn">重复了：${esc(rep.reps.slice(0, 4).join('、'))}</span>` : '';
+  if (rep.audio){
+    reps += `<span class="pill ${breaks ? 'warn' : 'good'}">${breaks ? `断句不当 <b>${breaks}</b> 处` : '断句没问题'}</span>`;
+    if (stress.length) reps += `<span class="pill ${stressOk === stress.length ? 'good' : 'warn'}">重音到位 <b>${stressOk}</b> / ${stress.length}</span>`;
+  }
   $('#report').innerHTML = `
     <div class="hrow"><h2>第 ${rec.n} 条 · 逐句报告</h2><span class="caveat">${new Date(rec.at).toLocaleTimeString('zh-CN', { hour: '2-digit', minute: '2-digit' })} · ${rec.level}</span></div>
     <div class="sum">${summaryPills(rec, reps)}</div>
     ${audio ? `<audio controls src="${audio}"></audio>` : ''}
-    <div class="rows">${bad.map(r => `<div class="row"><div class="no">${String(r.no).padStart(2, '0')}</div><div class="tx">${sentHTML(r.s, r.marks)}</div><div class="tags">${r.tags.map(tagHTML).join('')}</div></div>`).join('')}</div>
+    <div class="rows">${bad.map(r => `<div class="row"><div class="no">${String(r.no).padStart(2, '0')}</div><div class="tx">${sentHTML(r.s, r.marks)}</div>${r.spark ? `<div class="sk">${r.spark}</div>` : ''}<div class="tags">${r.tags.map(tagHTML).join('')}</div></div>`).join('')}</div>
     <div class="okline">${bad.length ? `其余 ${good} 句没发现问题。` : `念到的 ${good} 句都没发现问题。`}</div>
-    <p class="caveat">“读错”和“漏读”来自语音识别比对，同音字、数字写法不同也会被标出来，回放录音确认一下。发音是否标准（前后鼻音、平翘舌）这里判断不了。</p>`;
+    ${rep.audio ? '<p class="caveat">波形是这句话的音量起伏：金色块是重音词的位置，底部红线是较长的停顿，虚线以下算没出声。</p>' : '<p class="caveat">这次没拿到音量数据，断句和重音没有检查。</p>'}
+    <p class="caveat">“读错”和“漏读”来自语音识别比对，同音字也会被标出来。断句和重音是按音量和识别时间估算的，位置可能差一两个字，回放录音确认一下。发音是否标准（前后鼻音、平翘舌）这里判断不了。</p>`;
 }
 function renderPlainReport(rec, audio){
   $('#report').innerHTML = `
@@ -717,13 +881,14 @@ function micHint(){ return framed ? '在线预览里麦克风被禁用，录音�
 function renderIntroReport(){
   $('#report').innerHTML = `
     <div class="hrow"><h2>逐句报告<span class="ex">示例</span></h2><span class="caveat">念完一遍，这里换成你的结果</span></div>
-    <div class="sum"><span class="pill">用时 <b>1:14</b></span><span class="pill warn">平均 <b>276</b> 字/分 · 目标 250</span><span class="pill warn">跟读吻合 <b>91%</b></span><span class="pill warn">口头禅 然后×2、那个×1</span></div>
+    <div class="sum"><span class="pill">用时 <b>1:14</b></span><span class="pill warn">平均 <b>276</b> 字/分 · 目标 250</span><span class="pill warn">跟读吻合 <b>91%</b></span><span class="pill warn">口头禅 然后×2、那个×1</span><span class="pill warn">断句不当 <b>2</b> 处</span><span class="pill warn">重音到位 <b>2</b> / 4</span></div>
     <div class="rows">
-      <div class="row"><div class="no">04</div><div class="tx">一年就能毕业，时间成本低，总花费大概在三十万到四十万之间，比美国两年制省下<mark>将近</mark>一半。</div><div class="tags"><span class="pill bad">漏读“将近”</span><span class="pill warn">偏快 318 字/分</span></div></div>
-      <div class="row"><div class="no">09</div><div class="tx">只要是<mark>正规</mark>学校的全日制学位留服认证就完全没有问题。</div><div class="tags"><span class="pill bad">“正规”可能读成了“郑规”</span><span class="pill warn">句中卡了约 2.3 秒</span></div></div>
+      <div class="row"><div class="no">02</div><div class="tx">今天用三分钟，把这件事讲清楚。</div><div class="tags"><span class="pill good">重音「讲清楚」到位，比整句响 5 dB</span></div></div>
+      <div class="row"><div class="no">04</div><div class="tx">一年就能毕业，时间成本低，总花费大概在三十万到四十万之间，比美国两年制省下<mark>将近</mark>一半。</div><div class="tags"><span class="pill bad">漏读“将近”</span><span class="pill warn">偏快 318 字/分</span><span class="pill bad">重音「三十万到四十万」没咬出来，和前后差不多响</span></div></div>
+      <div class="row"><div class="no">09</div><div class="tx">只要是<mark>正规</mark>学校的全日制学位留服认证就完全没有问题。</div><div class="tags"><span class="pill bad">“正规”可能读成了“郑规”</span><span class="pill warn">断在「全日制|学位留」附近，停了 0.8 秒</span><span class="pill warn">断在「留服认|证就完」附近，停了 0.6 秒</span><span class="pill bad">这句断了 3 截，不够连贯</span></div></div>
     </div>
-    <div class="okline">其余 8 句没发现问题。</div>
-    <p class="caveat">切到“跟着声音”，提词器会跟着你念的进度走，念完生成这样的报告。${micHint()}</p>`;
+    <div class="okline">其余 7 句没发现问题。</div>
+    <p class="caveat">选“跟着声音”时，你念到哪，提词器就走到哪；你不出声，它就停着等你。念完会生成这样的报告。${micHint()}</p>`;
 }
 
 /* ---------- log ---------- */
