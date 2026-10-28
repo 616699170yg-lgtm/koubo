@@ -812,21 +812,46 @@ function sentAudioTags(aa, s, end, isFirst, target){
   // stressed words
   const sentMed = aa.median(aa.voicedIn(a0 - .1, a1 + .2));
   if (sentMed != null){
+    const last = Math.min(s.b, end - 1);
+    // expected stress: the user's own * marks; a sentence without any falls back to the suggested ones
+    let own = false; for (let k = s.a; k <= s.b; k++) if (R[k].stress){ own = true; break; }
+    const want = k => own ? R[k].stress : !!SUG[k];
+    const src = own ? '' : '（建议重音）';
+    // where the speaker actually leaned: the loudest 2–3 character stretch, if it stands out from the sentence
+    const cdb = [];
+    for (let k = s.a; k <= last; k++){ const a = aa.at(k); const v = a != null ? aa.voicedIn(a - .08, a + .18) : []; cdb[k] = v.length ? aa.median(v) : null; }
+    let hit = null;
+    for (const w of [3, 2]) for (let k = s.a; k + w - 1 <= last; k++){
+      const xs = cdb.slice(k, k + w).filter(v => v != null);
+      if (xs.length < w || (w === 3 ? R[k].pause || R[k+1].pause : R[k].pause)) continue;
+      const avg = xs.reduce((p, q) => p + q, 0) / w;
+      if (!hit || avg > hit.avg) hit = { a: k, b: k + w - 1, avg };
+    }
+    if (hit && hit.avg - sentMed < 3) hit = null;
+    let anyWant = false, anyGood = false, wantWords = [];
     let k = s.a;
-    while (k <= Math.min(s.b, end - 1)){
-      if (!R[k].stress){ k++; continue; }
-      let j = k; while (j + 1 <= Math.min(s.b, end - 1) && R[j+1].stress) j++;
+    while (k <= last){
+      if (!want(k)){ k++; continue; }
+      let j = k; while (j + 1 <= last && want(j + 1) && R[j].pause === 0) j++; // a comma ends the word
+      anyWant = true;
       const w0 = aa.at(k), w1 = aa.at(j);
       const vv = w0 != null && w1 != null ? aa.voicedIn(w0 - .15, w1 + .2) : [];
       const m = vv.length >= 3 ? aa.median(vv) : null;
       if (m != null){
         const d = m - sentMed, word = origText(k, j + 1);
-        if (d >= 3) tags.push({ c: 'good', t: `重音「${word}」到位，比整句响 ${d.toFixed(0)} dB` });
-        else if (d >= 1.5) tags.push({ c: 'warn', t: `重音「${word}」稍弱，只响了 ${d.toFixed(1)} dB` });
-        else tags.push({ c: 'bad', t: `重音「${word}」没咬出来，和前后差不多响` });
+        wantWords.push(word);
+        if (d >= 3){ anyGood = true; tags.push({ c: 'good', t: `重音「${word}」到位${src}，比整句响 ${d.toFixed(0)} dB` }); }
+        else if (d >= 1.5) tags.push({ c: 'warn', t: `重音「${word}」稍弱${src}，只响了 ${d.toFixed(1)} dB` });
+        else tags.push({ c: 'bad', t: `重音「${word}」没咬出来${src}，和前后差不多响` });
         marks.push([w0 - .15, w1 + .2]);
       }
       k = j + 1;
+    }
+    if (hit){
+      const overlapsWant = (() => { for (let x = hit.a; x <= hit.b; x++) if (want(x)) return true; return false; })();
+      const said = origText(hit.a, hit.b + 1);
+      if (!overlapsWant && anyWant && !anyGood) tags.push({ c: 'bad', t: `重音落在了「${said}」上，这里该重读「${wantWords.join('、')}」` });
+      else if (!anyWant) tags.push({ c: '', t: `你把重音放在了「${said}」` });
     }
     // dropped tail: last two characters much quieter than the sentence
     if (s.b < end && s.b - s.a >= 5){
@@ -925,7 +950,7 @@ function renderReport(rep, rec, audio){
   const bad = rep.rows.filter(r => r.tags.length), good = rep.rows.length - bad.length;
   const all = rep.rows.flatMap(r => r.tags);
   const breaks = all.filter(x => x.t.startsWith('断在')).length;
-  const stress = all.filter(x => x.t.startsWith('重音')), stressOk = stress.filter(x => x.c === 'good').length;
+  const stress = all.filter(x => /^重音「/.test(x.t)), stressOk = stress.filter(x => x.c === 'good').length;
   let reps = rep.reps.length ? `<span class="pill warn">重复了：${esc(rep.reps.slice(0, 4).join('、'))}</span>` : '';
   if (rep.audio){
     reps += `<span class="pill ${breaks ? 'warn' : 'good'}">${breaks ? `断句不当 <b>${breaks}</b> 处` : '断句没问题'}</span>`;
@@ -987,8 +1012,18 @@ function renderLog(){
 }
 
 /* ---------- sheet ---------- */
+let SUG = [];
+function suggested(text){ // suggested stress per readable character, from the rule-based marker
+  const out = []; let on = false, ri = 0;
+  for (const ch of autoStress(text.replace(/[*＊]/g, ''))){
+    if (ch === '*'){ on = !on; continue; }
+    if (READ.test(ch)){ out[ri++] = on; }
+  }
+  return out;
+}
 function analyse(){
   parse(scriptEl.value);
+  SUG = suggested(scriptEl.value);
   tm = timing(st.cpm);
   $('#sZi').textContent = zi(0, R.length);
   $('#sJu').textContent = sentences.length;
