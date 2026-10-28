@@ -1,0 +1,857 @@
+<!doctype html><html lang="zh-CN"><head><meta charset="utf-8"><meta name="viewport" content="width=device-width,initial-scale=1,viewport-fit=cover"><style>:root{color-scheme:light;padding-top:env(safe-area-inset-top,0px);padding-bottom:env(safe-area-inset-bottom,0px)}body{margin:0;font:14px system-ui,sans-serif}img{max-width:100%}[hidden]{display:none!important}</style></head><body><title>口播练习台</title>
+<meta name="claude:viewport-fit-sides" content="cover">
+<meta name="apple-mobile-web-app-capable" content="yes">
+<meta name="apple-mobile-web-app-title" content="口播练习台">
+<link rel="preconnect" href="https://fonts.googleapis.com">
+<link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
+<link rel="stylesheet" href="https://fonts.googleapis.com/css2?family=JetBrains+Mono:wght@400;600&family=Noto+Sans+SC:wght@400;500;700;900&family=Noto+Serif+SC:wght@700;900&display=swap">
+<style>
+/* Layout: a studio desk. The prompter glass is the hero on top/right; the script sheet sits beside it; the take log runs underneath like a slate sheet. */
+:root{
+  --bg:#ECEEF1; --surface:#FFFFFF; --sunk:#E3E6EB; --ink:#1A2130; --muted:#5B6474; --line:#D3D8E0;
+  --tally:#D0362A; --tally-soft:#F6DEDB; --cue:#B57A0A; --cue-soft:#F4E7CC; --ok:#2C7A57; --ok-soft:#DCEFE5;
+  --glass:#0D1016; --glass-2:#151A23; --glass-ink:#F2EFE6; --glass-dim:#4E5564; --glass-cue:#F0BE4C; --glass-miss:#FF6E5E; --glass-mask:rgba(242,239,230,.22);
+  --f-display:"Noto Serif SC","Songti SC","STSong",serif;
+  --f-body:"Noto Sans SC","PingFang SC","Hiragino Sans GB","Microsoft YaHei",sans-serif;
+  --f-mono:"JetBrains Mono",ui-monospace,"SF Mono",Menlo,Consolas,monospace;
+  --r:10px;
+}
+@media (prefers-color-scheme: dark){:root:not([data-theme="light"]){
+  --bg:#111419; --surface:#191D25; --sunk:#14171D; --ink:#E5E8EE; --muted:#97A0AF; --line:#2A303B;
+  --tally:#FF5B4B; --tally-soft:#3A1C1A; --cue:#E3AA3D; --cue-soft:#33280F; --ok:#4EB487; --ok-soft:#14301F; color-scheme:dark}}
+:root[data-theme="dark"]{
+  --bg:#111419; --surface:#191D25; --sunk:#14171D; --ink:#E5E8EE; --muted:#97A0AF; --line:#2A303B;
+  --tally:#FF5B4B; --tally-soft:#3A1C1A; --cue:#E3AA3D; --cue-soft:#33280F; --ok:#4EB487; --ok-soft:#14301F; color-scheme:dark}
+
+*{box-sizing:border-box}
+[hidden]{display:none!important}
+body{background:var(--bg);color:var(--ink);font-family:var(--f-body);font-size:15px;line-height:1.6;
+  padding-left:max(16px,env(safe-area-inset-left,0px));padding-right:max(16px,env(safe-area-inset-right,0px));padding-block:0 40px}
+button,input,textarea,select{font:inherit;color:inherit}
+:focus-visible{outline:2px solid var(--cue);outline-offset:2px}
+
+.top{max-width:1280px;margin:0 auto;display:flex;align-items:center;gap:14px;flex-wrap:wrap;padding-block:18px 14px}
+.brand{font-family:var(--f-display);font-weight:900;font-size:22px;letter-spacing:.04em;margin:0}
+.brand small{font-family:var(--f-body);font-weight:500;font-size:13px;color:var(--muted);letter-spacing:0;margin-left:10px}
+.tally{margin-left:auto;display:inline-flex;align-items:center;gap:8px;padding:4px 12px 4px 10px;border-radius:999px;border:1px solid var(--line);
+  font-size:12px;font-weight:700;letter-spacing:.12em;color:var(--muted);background:var(--surface)}
+.tally i{width:9px;height:9px;border-radius:50%;background:var(--line)}
+.tally.on{color:var(--tally);border-color:var(--tally);background:var(--tally-soft)}
+.tally.on i{background:var(--tally);box-shadow:0 0 0 4px color-mix(in srgb,var(--tally) 25%,transparent);animation:blink 1.2s infinite}
+@keyframes blink{50%{opacity:.35}}
+.tc{font-family:var(--f-mono);font-variant-numeric:tabular-nums;font-size:15px}
+.tc span{color:var(--muted)}
+
+.desk{max-width:1280px;margin:0 auto;display:grid;gap:18px;grid-template-columns:minmax(0,1fr);grid-template-areas:"stage" "sheet" "log"}
+@media (min-width:980px){.desk{grid-template-columns:360px minmax(0,1fr);grid-template-areas:"sheet stage" "log log"}}
+.stage{grid-area:stage;min-width:0;display:flex;flex-direction:column;gap:12px}
+.sheet{grid-area:sheet;min-width:0}
+.log{grid-area:log;min-width:0}
+
+/* prompter glass */
+.glass{position:relative;background:radial-gradient(120% 90% at 50% 35%,var(--glass-2),var(--glass));border-radius:14px;overflow:hidden;
+  height:clamp(320px,58vh,620px);color:var(--glass-ink)}
+.glass:fullscreen{height:100%;border-radius:0}
+.vp{position:absolute;inset:0;overflow-y:auto;scrollbar-width:none;-webkit-overflow-scrolling:touch}
+.vp::-webkit-scrollbar{display:none}
+.copy{position:relative;padding-inline:clamp(20px,6%,72px);font-weight:500;letter-spacing:.02em;line-height:1.55;
+  font-size:var(--fs,44px);transition:transform .2s;word-break:break-all}
+.copy.mirror{transform:scaleX(-1)}
+.copy .c{transition:color .25s}
+.copy .c.rd{color:var(--glass-dim)}
+.copy .c.cur{color:#fff;text-shadow:0 0 18px rgba(255,255,255,.35)}
+.copy .st{color:var(--glass-cue);font-weight:900}
+.copy .st.rd{color:color-mix(in srgb,var(--glass-cue) 45%,var(--glass-dim))}
+.copy .pu{color:var(--glass-ink);opacity:.55}
+.copy .pz{display:inline-block;width:.12em;height:.75em;background:var(--glass-cue);margin:0 .22em;vertical-align:-.05em;border-radius:2px;opacity:.85}
+.copy .para{display:block;height:.7em}
+.copy .m{color:transparent;background:linear-gradient(var(--glass-mask),var(--glass-mask)) 0 88%/86% .09em no-repeat}
+.copy .m.rd{color:var(--glass-dim);background:none}
+.copy .miss{text-decoration:underline wavy var(--glass-miss);text-decoration-thickness:.06em;text-underline-offset:.18em;color:var(--glass-miss)!important}
+.copy.idle .c{cursor:pointer}
+.copy.idle .c:hover{color:var(--glass-cue)}
+.cueline{position:absolute;left:0;right:0;top:35%;height:0;pointer-events:none;border-top:1px dashed rgba(240,190,76,.28)}
+.cueline::before{content:"";position:absolute;left:0;top:-9px;border:9px solid transparent;border-left:12px solid var(--glass-cue)}
+.cueline::after{content:"";position:absolute;right:0;top:-9px;border:9px solid transparent;border-right:12px solid var(--glass-cue)}
+.fade{position:absolute;left:0;right:0;pointer-events:none;height:18%}
+.fade.t{top:0;background:linear-gradient(var(--glass),transparent)}
+.fade.b{bottom:0;background:linear-gradient(transparent,var(--glass))}
+.count{position:absolute;inset:0;display:flex;align-items:center;justify-content:center;font-family:var(--f-mono);font-size:120px;font-weight:600;
+  color:var(--glass-cue);background:rgba(13,16,22,.6)}
+.glassnote{position:absolute;left:12px;bottom:10px;right:12px;font-size:12px;color:var(--glass-dim);display:flex;gap:12px;flex-wrap:wrap;pointer-events:none}
+
+/* controls */
+.deck{background:var(--surface);border:1px solid var(--line);border-radius:var(--r);padding:12px;display:flex;flex-wrap:wrap;gap:12px 18px;align-items:center}
+.transport{display:flex;gap:8px;flex-wrap:wrap}
+.btn{border:1px solid var(--line);background:var(--surface);border-radius:8px;padding:8px 14px;cursor:pointer;font-weight:500;display:inline-flex;gap:6px;align-items:center;min-height:40px}
+.btn:hover{border-color:var(--muted)}
+.btn:disabled{opacity:.45;cursor:not-allowed}
+.btn.go{background:var(--ink);color:var(--bg);border-color:var(--ink);font-weight:700;min-width:104px;justify-content:center}
+.btn.go.live{background:var(--tally);border-color:var(--tally);color:#fff}
+.btn.small{min-height:32px;padding:4px 10px;font-size:13px}
+.field{display:flex;align-items:center;gap:8px;font-size:13px;color:var(--muted)}
+.field b{color:var(--ink);font-family:var(--f-mono);font-weight:600;font-variant-numeric:tabular-nums;min-width:4.6em}
+input[type=range]{accent-color:var(--ink);width:120px}
+.seg{display:inline-flex;border:1px solid var(--line);border-radius:8px;overflow:hidden}
+.seg button{border:0;background:transparent;padding:6px 11px;cursor:pointer;font-size:13px;color:var(--muted)}
+.seg button[aria-pressed="true"]{background:var(--ink);color:var(--bg)}
+.seg button:disabled{opacity:.4;cursor:not-allowed}
+.chk{display:inline-flex;align-items:center;gap:6px;font-size:13px;color:var(--muted);cursor:pointer}
+.chk input{accent-color:var(--tally);width:16px;height:16px}
+.presets{display:flex;gap:6px;flex-wrap:wrap}
+.chip{border:1px solid var(--line);background:transparent;border-radius:999px;padding:2px 10px;font-size:12px;cursor:pointer;color:var(--muted)}
+.chip[aria-pressed="true"]{border-color:var(--ink);color:var(--ink);font-weight:700}
+.grp{display:flex;flex-wrap:wrap;gap:10px 18px;align-items:center}
+.lbl{font-size:11px;letter-spacing:.14em;color:var(--muted);font-weight:700}
+
+.notice{border:1px solid var(--cue);background:var(--cue-soft);border-radius:var(--r);padding:10px 14px;font-size:14px;display:flex;gap:12px;align-items:center;flex-wrap:wrap}
+.notice p{margin:0;flex:1 1 280px;min-width:0}
+
+/* script sheet */
+.card{background:var(--surface);border:1px solid var(--line);border-radius:var(--r)}
+.sheet .card{padding:16px;display:flex;flex-direction:column;gap:14px}
+h2{font-family:var(--f-display);font-size:17px;font-weight:900;margin:0;letter-spacing:.03em;text-wrap:balance}
+.hrow{display:flex;justify-content:space-between;align-items:baseline;gap:10px;flex-wrap:wrap}
+textarea#script{width:100%;min-height:260px;resize:vertical;border:1px solid var(--line);border-radius:8px;background:var(--sunk);padding:12px;line-height:1.8;font-size:15px}
+textarea#script[readonly]{opacity:.6}
+.stats{display:grid;grid-template-columns:repeat(3,minmax(0,1fr));gap:8px}
+.stat{background:var(--sunk);border-radius:8px;padding:8px 10px}
+.stat .k{font-size:12px;color:var(--muted)}
+.stat .v{font-family:var(--f-mono);font-size:20px;font-weight:600;font-variant-numeric:tabular-nums}
+.stat .v small{font-size:12px;color:var(--muted);font-family:var(--f-body);font-weight:400;margin-left:2px}
+.legend{font-size:13px;color:var(--muted);display:grid;gap:4px}
+.legend code{font-family:var(--f-mono);background:var(--sunk);padding:1px 6px;border-radius:4px;color:var(--ink)}
+.warns{display:grid;gap:6px;font-size:13px}
+.warns .w{border-left:3px solid var(--cue);padding:2px 0 2px 10px}
+.warns .w q{quotes:"「" "」";color:var(--ink)}
+
+/* report */
+.report{padding:16px;display:flex;flex-direction:column;gap:12px}
+.sum{display:flex;flex-wrap:wrap;gap:8px}
+.pill{font-size:13px;border-radius:999px;padding:3px 11px;background:var(--sunk);white-space:nowrap}
+.pill.bad{background:var(--tally-soft);color:var(--tally)}
+.pill.warn{background:var(--cue-soft);color:var(--cue)}
+.pill.good{background:var(--ok-soft);color:var(--ok)}
+.pill b{font-family:var(--f-mono);font-variant-numeric:tabular-nums}
+.rows{display:grid;gap:0}
+.row{display:grid;grid-template-columns:2.2em minmax(0,1fr);gap:4px 10px;padding:10px 0;border-top:1px solid var(--line)}
+.row .no{font-family:var(--f-mono);color:var(--muted);font-size:13px;padding-top:2px}
+.row .tx{font-size:16px;line-height:1.75}
+.row .tx mark{background:none;color:var(--tally);text-decoration:underline wavy var(--tally);text-underline-offset:4px}
+.row .tags{grid-column:2;display:flex;flex-wrap:wrap;gap:6px}
+.okline{font-size:13px;color:var(--muted);border-top:1px solid var(--line);padding-top:10px}
+.ex{font-size:11px;font-weight:700;letter-spacing:.1em;color:var(--cue);border:1px solid var(--cue);border-radius:4px;padding:0 5px;margin-left:8px;vertical-align:2px}
+.caveat{font-size:12px;color:var(--muted);margin:0}
+audio{width:100%;max-width:420px;height:36px}
+
+/* log */
+.log .card{padding:16px}
+.tablewrap{overflow-x:auto;margin-top:10px}
+table{border-collapse:collapse;width:100%;min-width:720px;font-size:14px}
+th{font-size:11px;letter-spacing:.12em;color:var(--muted);font-weight:700;text-align:left;padding:6px 10px 6px 0;border-bottom:1px solid var(--line)}
+td{padding:9px 10px 9px 0;border-bottom:1px solid var(--line);vertical-align:middle}
+td.num{font-family:var(--f-mono);font-variant-numeric:tabular-nums}
+tr.sample td{color:var(--muted)}
+.scale{position:relative;width:110px;height:14px;display:inline-block;vertical-align:middle;margin-left:8px}
+.scale::before{content:"";position:absolute;left:0;right:0;top:6px;height:2px;background:var(--line);border-radius:2px}
+.scale .tg{position:absolute;top:1px;width:2px;height:12px;background:var(--muted)}
+.scale .dot{position:absolute;top:2px;width:10px;height:10px;border-radius:50%;margin-left:-5px;background:var(--ok)}
+.scale .dot.off{background:var(--cue)}
+
+@media (max-width:560px){
+  .copy{line-height:1.5}
+  .stats .v{font-size:17px}
+  .count{font-size:88px}
+  input[type=range]{width:96px}
+}
+@media (prefers-reduced-motion:reduce){*{animation:none!important;transition:none!important}}
+</style>
+
+<header class="top">
+  <h1 class="brand">口播练习台<small>提词 · 录音 · 逐句纠错</small></h1>
+  <div class="tally" id="tally"><i></i><span id="tallyTxt">待机</span></div>
+  <div class="tc" id="tc">00:00.0 <span>/ 预计 00:00</span></div>
+</header>
+
+<main class="desk">
+  <section class="stage" aria-label="提词器">
+    <div class="glass" id="glass">
+      <div class="vp" id="vp"><div class="copy idle" id="copy"></div></div>
+      <div class="fade t"></div><div class="fade b"></div>
+      <div class="cueline"></div>
+      <div class="count" id="count" hidden>3</div>
+      <div class="glassnote" id="glassnote"><span>点任意一句，从那句开始</span><span>空格 开始/暂停 · ↑↓ 调语速</span></div>
+    </div>
+
+    <div class="notice" id="notice" hidden><p id="noticeTxt"></p><button class="btn small" id="saveOffline" hidden>保存离线版</button></div>
+
+    <div class="deck">
+      <div class="transport">
+        <button class="btn go" id="go">开始</button>
+        <button class="btn" id="stop" disabled>结束本条</button>
+        <button class="btn" id="rewind" title="回到开头">回到开头</button>
+      </div>
+      <div class="grp">
+        <span class="field">滚动
+          <span class="seg" id="followSeg"><button data-v="auto" aria-pressed="true">匀速</button><button data-v="voice" aria-pressed="false">跟着声音</button></span>
+        </span>
+        <label class="chk"><input type="checkbox" id="rec" checked>录音回放</label>
+      </div>
+      <div class="grp">
+        <span class="field">语速 <input type="range" id="cpm" min="120" max="400" step="10" value="250" aria-label="目标语速"><b id="cpmV">250 字/分</b></span>
+        <span class="presets" id="presets"><button class="chip" data-v="200">娓娓道来 200</button><button class="chip" data-v="250">标准口播 250</button><button class="chip" data-v="300">快节奏 300</button></span>
+      </div>
+      <div class="grp">
+        <span class="field">提示
+          <span class="seg" id="levelSeg"><button data-v="0" aria-pressed="true">全文</button><button data-v="1" aria-pressed="false">半遮</button><button data-v="2" aria-pressed="false">只留首字</button></span>
+        </span>
+        <span class="field">字号 <input type="range" id="fs" min="24" max="80" step="2" value="44" aria-label="字号"></span>
+        <label class="chk"><input type="checkbox" id="mirror">镜像</label>
+        <button class="btn small" id="full">全屏</button>
+      </div>
+    </div>
+
+    <div class="card report" id="report"></div>
+  </section>
+
+  <aside class="sheet" aria-label="稿子">
+    <div class="card">
+      <div class="hrow"><h2>稿子</h2><button class="btn small" id="loadSample">换回示例稿</button></div>
+      <textarea id="script" spellcheck="false" aria-label="口播稿"></textarea>
+      <div class="stats">
+        <div class="stat"><div class="k">字数</div><div class="v" id="sZi">0</div></div>
+        <div class="stat"><div class="k">句数</div><div class="v" id="sJu">0</div></div>
+        <div class="stat"><div class="k">预计时长</div><div class="v" id="sDur">0:00</div></div>
+      </div>
+      <div class="warns" id="warns"></div>
+      <div class="legend">
+        <div><code>/</code> 停顿、换气（提词器里显示成金色竖线）</div>
+        <div><code>*重音*</code> 要咬重的词（显示为金色粗体）</div>
+        <div><code>空一行</code> 分段，段落间停得更久</div>
+      </div>
+    </div>
+  </aside>
+
+  <section class="log" aria-label="练习记录">
+    <div class="card">
+      <div class="hrow"><h2>练习记录</h2><button class="btn small" id="clearLog">清空记录</button></div>
+      <div class="tablewrap"><table>
+        <thead><tr><th>条次</th><th>时间</th><th>方式</th><th>提示</th><th>用时</th><th>语速（对比目标）</th><th>跟读吻合</th><th>口头禅</th><th>回放</th></tr></thead>
+        <tbody id="logBody"></tbody>
+      </table></div>
+    </div>
+  </section>
+</main>
+
+<script type="text/plain" id="seed">英国一年制硕士，到底值不值？/ 今天用三分钟，把这件事*讲清楚*。
+
+先说优势。一年就能毕业，时间成本低，/ 总花费大概在*三十万到四十万*之间，比美国两年制省下将近一半。
+
+再说争议。很多人担心，一年时间太短，学不到东西。/ 但其实，课程强度非常大，/ 你几乎每周都要交作业、做展示。
+
+最后说回国认可度。只要是*正规学校*的全日制学位留服认证就完全没有问题。
+
+所以我的建议是：/ 如果你目标明确、想尽快进入职场，/ 英国一年制硕士，*非常值得*考虑。</script>
+
+<script>
+(() => {
+const PRISTINE = '<!doctype html>\n' + document.documentElement.outerHTML;
+const $ = s => document.querySelector(s);
+const store = {
+  get(k, d){ try{ const v = localStorage.getItem(k); return v == null ? d : JSON.parse(v); }catch(e){ return d; } },
+  set(k, v){ try{ localStorage.setItem(k, JSON.stringify(v)); }catch(e){} }
+};
+const SEED = $('#seed').textContent;
+const framed = (() => { try { return window.self !== window.top; } catch(e){ return true; } })();
+const SRClass = window.SpeechRecognition || window.webkitSpeechRecognition;
+const isIOS = /iP(hone|ad|od)/.test(navigator.userAgent) || (navigator.platform === 'MacIntel' && navigator.maxTouchPoints > 1);
+
+const st = Object.assign({ cpm:250, fs:44, mirror:false, level:0, follow:'auto', rec:true }, store.get('kb.prefs', {}));
+let takes = store.get('kb.takes', []);
+const scriptEl = $('#script');
+scriptEl.value = store.get('kb.script', SEED);
+
+/* ---------- parsing ---------- */
+const HAN = /\p{Script=Han}/u, READ = /[\p{L}\p{N}]/u;
+const PAUSE = { '。':.5,'！':.5,'？':.5,'!':.5,'?':.5,'；':.4,';':.4,'…':.5,'，':.22,',':.22,'、':.18,'：':.3,':':.3 };
+const SENT_END = /[。！？!?；;…]/;
+let T = [], R = [], S = '', sentences = [];
+
+function parse(text){
+  T = []; R = [];
+  let stress = false;
+  text = text.replace(/\r/g, '');
+  for (let i = 0; i < text.length; i++){
+    const ch = text[i];
+    if (ch === '*' || ch === '＊'){ stress = !stress; continue; }
+    if (ch === '\n'){ let j = i; while (text[j+1] === '\n' || (text[j+1] === ' ' && text[j+2] === '\n')) j++; T.push({t: j > i ? 'para' : 'br'}); i = j; continue; }
+    if (ch === '/' || ch === '／'){ T.push({t:'pz'}); continue; }
+    if (READ.test(ch)){
+      const ri = R.length;
+      R.push({ ch: ch.toLowerCase(), han: HAN.test(ch), w: HAN.test(ch) ? 1 : .4, ti: T.length, pause: 0, stress, sent: 0, spos: 0, cpos: 0 });
+      T.push({ t:'c', ch, ri, stress });
+    } else if (/\s/.test(ch)) T.push({ t:'sp' });
+    else T.push({ t:'p', ch });
+  }
+  // pauses, sentence & clause positions
+  let last = -1, sent = 0, spos = 0, cpos = 0, newSent = true;
+  sentences = [];
+  for (const tk of T){
+    if (tk.t === 'c'){
+      const r = R[tk.ri];
+      if (newSent){ if (sentences.length) sentences[sentences.length-1].b = last; sentences.push({ a: tk.ri, b: tk.ri }); spos = 0; cpos = 0; newSent = false; }
+      r.sent = sentences.length - 1; r.spos = spos++; r.cpos = cpos++; last = tk.ri;
+      continue;
+    }
+    if (last < 0) continue;
+    if (tk.t === 'p'){ R[last].pause += PAUSE[tk.ch] || 0; if (SENT_END.test(tk.ch)) newSent = true; if (PAUSE[tk.ch]) cpos = 0; }
+    else if (tk.t === 'pz'){ R[last].pause += .45; cpos = 0; }
+    else if (tk.t === 'br'){ R[last].pause += .3; newSent = true; }
+    else if (tk.t === 'para'){ R[last].pause += .9; newSent = true; }
+  }
+  if (sentences.length) sentences[sentences.length-1].b = R.length - 1;
+  S = R.map(r => r.ch).join('');
+}
+
+function zi(a, b){ // spoken units: each Han char = 1, each latin/digit run = 1
+  let n = 0, inRun = false;
+  for (let i = a; i < b && i < R.length; i++){
+    if (R[i].han){ n++; inRun = false; } else { if (!inRun) n++; inRun = true; }
+  }
+  return n;
+}
+function timing(cpm){ // char rate such that whole script lasts zi/cpm minutes incl. pauses
+  const total = Math.max(1, zi(0, R.length) / cpm * 60);
+  const P0 = R.reduce((s, r) => s + r.pause, 0);
+  const W = R.reduce((s, r) => s + r.w, 0) || 1;
+  let ps = 250 / cpm;
+  if (P0 * ps > total * .45) ps = total * .45 / P0;
+  return { total, rate: W / (total - P0 * ps), ps };
+}
+
+/* ---------- prompter render ---------- */
+const copy = $('#copy'), vp = $('#vp');
+let els = [];
+const esc = s => s.replace(/[&<>"]/g, c => ({'&':'&amp;','<':'&lt;','>':'&gt;','"':'&quot;'}[c]));
+function masked(r){
+  if (st.level === 1) return !(r.cpos < 2 || r.stress);
+  if (st.level === 2) return r.spos !== 0;
+  return false;
+}
+function renderPrompter(){
+  copy.innerHTML = T.map(tk => {
+    if (tk.t === 'c'){ const r = R[tk.ri]; return `<span class="c${tk.stress ? ' st' : ''}${masked(r) ? ' m' : ''}" data-r="${tk.ri}">${esc(tk.ch)}</span>`; }
+    if (tk.t === 'p') return `<span class="pu">${esc(tk.ch)}</span>`;
+    if (tk.t === 'pz') return '<span class="pz" title="停顿"></span>';
+    if (tk.t === 'br') return '<br>';
+    if (tk.t === 'para') return '<span class="para"></span>';
+    return ' ';
+  }).join('') || '<span style="opacity:.5">在右边贴入你的口播稿</span>';
+  els = Array.from(copy.querySelectorAll('.c'));
+  shown = 0; curEl = null; cursor = Math.min(cursor, R.length);
+  paintCursor(true);
+  sizeVP();
+}
+function sizeVP(){
+  const h = vp.clientHeight;
+  copy.style.paddingTop = (h * .35 - st.fs * .78) + 'px';
+  copy.style.paddingBottom = (h * .65) + 'px';
+}
+
+/* ---------- cursor ---------- */
+let cursor = 0, shown = 0, curEl = null;
+let tReach = [];
+function paintCursor(force){
+  const f = Math.min(R.length, Math.floor(cursor + 1e-6));
+  if (force){ els.forEach((e, i) => e.classList.toggle('rd', i < f)); }
+  else if (f > shown){ for (let i = shown; i < f; i++) els[i].classList.add('rd'); }
+  else if (f < shown){ for (let i = f; i < shown; i++) els[i].classList.remove('rd'); }
+  if (running && take){ for (let i = shown; i < f; i++) if (tReach[i] == null) tReach[i] = elapsed; }
+  shown = f;
+  const ce = els[Math.min(f, els.length - 1)] || null;
+  if (curEl !== ce){ curEl && curEl.classList.remove('cur'); ce && running && ce.classList.add('cur'); curEl = ce; }
+}
+function targetScroll(){
+  const e = els[Math.min(Math.floor(cursor), els.length - 1)];
+  if (!e) return 0;
+  return e.offsetTop - vp.clientHeight * .35 + e.offsetHeight * .5;
+}
+
+/* ---------- transport ---------- */
+let running = false, paused = false, elapsed = 0, lastTs = 0, take = null;
+let hold = 0, frac = 0, tm = timing(st.cpm);
+const goBtn = $('#go'), stopBtn = $('#stop');
+
+function loop(ts){
+  const dt = lastTs ? Math.min(.1, (ts - lastTs) / 1000) : 0; lastTs = ts;
+  if (running && !paused){
+    elapsed += dt;
+    if (take.mode === 'auto') advance(dt);
+    paintCursor();
+    vp.scrollTop += (targetScroll() - vp.scrollTop) * Math.min(1, dt * 5);
+    if (take.mode === 'auto' && cursor >= R.length) { if ((take.endWait = (take.endWait || 0) + dt) > 1) finish(); }
+    if (take.mode === 'voice' && liveCommitted() >= R.length) { if ((take.endWait = (take.endWait || 0) + dt) > 1.2) finish(); }
+  }
+  drawClock();
+  requestAnimationFrame(loop);
+}
+function advance(dt){
+  let rem = dt;
+  while (rem > 0 && cursor < R.length){
+    if (hold > 0){ const u = Math.min(hold, rem); hold -= u; rem -= u; continue; }
+    const i = Math.floor(cursor), r = R[i];
+    const ct = r.w / tm.rate, need = (1 - frac) * ct;
+    if (rem >= need){ rem -= need; frac = 0; cursor = i + 1; hold = r.pause * tm.ps; }
+    else { frac += rem / ct; rem = 0; cursor = i + frac; }
+  }
+}
+const fmt = s => { s = Math.max(0, s); const m = Math.floor(s / 60), x = s - m * 60; return String(m).padStart(2, '0') + ':' + x.toFixed(1).padStart(4, '0'); };
+const fmtShort = s => { s = Math.round(s); return Math.floor(s / 60) + ':' + String(s % 60).padStart(2, '0'); };
+function drawClock(){
+  $('#tc').innerHTML = `${fmt(elapsed)} <span>/ 预计 ${fmtShort(tm.total)}</span>`;
+}
+
+async function onGo(){
+  if (running){ setPaused(!paused); return; }
+  if (!R.length) return;
+  if (cursor >= R.length - .5) cursor = 0;
+  const startRi = sentences[R[Math.min(Math.floor(cursor), R.length - 1)].sent].a;
+  cursor = startRi; frac = 0; hold = 0;
+  let wantVoice = st.follow === 'voice' && !!SRClass, wantRec = st.rec;
+  let stream = null;
+  if (wantVoice || wantRec){
+    try {
+      if (!navigator.mediaDevices || !navigator.mediaDevices.getUserMedia) throw new Error('nomedia');
+      stream = await navigator.mediaDevices.getUserMedia({ audio: { echoCancellation: true, noiseSuppression: true } });
+    } catch(e){
+      showMicProblem(e);
+      wantVoice = false; wantRec = false;
+    }
+  }
+  take = { mode: wantVoice ? 'voice' : 'auto', startRi, level: st.level, target: st.cpm, endWait: 0 };
+  // reset visuals
+  els.forEach(e => e.classList.remove('miss'));
+  if (stream && !wantRec){ stream.getTracks().forEach(x => x.stop()); stream = null; } // voice-only: the recognizer opens its own mic
+  tReach = []; events = []; finalsAll = ''; committed = startRi; matchedTotal = 0; sess = null; sr = null;
+  paintCursor(true);
+  copy.classList.remove('idle');
+  scriptEl.readOnly = true;
+  goBtn.disabled = true;
+  if (take.mode === 'auto') await countdown();
+  elapsed = 0; running = true; paused = false;
+  goBtn.disabled = false; stopBtn.disabled = false;
+  if (wantRec && stream) startRecorder(stream);
+  take.stream = stream;
+  if (wantVoice) startSR();
+  wakeLock();
+  syncTransport();
+}
+function countdown(){
+  return new Promise(res => {
+    const c = $('#count'); let n = 3; c.hidden = false; c.textContent = n;
+    const t = setInterval(() => { n--; if (n <= 0){ clearInterval(t); c.hidden = true; res(); } else c.textContent = n; }, 700);
+  });
+}
+function setPaused(p){
+  paused = p;
+  if (take && take.mode === 'voice'){ if (p) stopSR(); else startSR(); }
+  if (recorder && recorder.state !== 'inactive'){ try { p ? recorder.pause() : recorder.resume(); } catch(e){} }
+  syncTransport();
+}
+function syncTransport(){
+  goBtn.textContent = !running ? '开始' : paused ? '继续' : '暂停';
+  goBtn.classList.toggle('live', running && !paused);
+  const rec = running && !paused && recorder && recorder.state === 'recording';
+  const lis = running && !paused && take && take.mode === 'voice';
+  $('#tally').classList.toggle('on', !!(rec || lis));
+  $('#tallyTxt').textContent = !running ? '待机' : paused ? '已暂停' : rec ? '录音中' : lis ? '收听中' : '滚动中';
+  stopBtn.disabled = !running;
+}
+
+/* ---------- recorder ---------- */
+let recorder = null, chunks = [];
+function startRecorder(stream){
+  if (!window.MediaRecorder){ recorder = null; return; }
+  const types = ['audio/mp4', 'audio/webm;codecs=opus', 'audio/webm'];
+  const mt = types.find(t => MediaRecorder.isTypeSupported && MediaRecorder.isTypeSupported(t));
+  try { recorder = new MediaRecorder(stream, mt ? { mimeType: mt } : undefined); } catch(e){ recorder = null; return; }
+  chunks = [];
+  recorder.ondataavailable = e => { if (e.data && e.data.size) chunks.push(e.data); };
+  try { recorder.start(1000); } catch(e){ recorder = null; }
+}
+function stopRecorder(){
+  return new Promise(res => {
+    if (!recorder || recorder.state === 'inactive'){ res(null); return; }
+    const r = recorder;
+    r.onstop = () => res(chunks.length ? URL.createObjectURL(new Blob(chunks, { type: r.mimeType || 'audio/webm' })) : null);
+    try { r.stop(); } catch(e){ res(null); }
+    setTimeout(() => res(null), 2500);
+  });
+}
+
+/* ---------- speech recognition & alignment ---------- */
+let sr = null, srWanted = false, stopping = null, sess = null, events = [], finalsAll = '', committed = 0, matchedTotal = 0;
+function norm(t){ return (t.toLowerCase().match(/[\p{L}\p{N}]/gu) || []).join(''); }
+
+function align(start, text){
+  let c = start, run = '', matched = 0; const ev = [];
+  const push = (a, b, said) => { if (a === b && !said) return; ev.push({ a, b, said }); };
+  for (let i = 0; i < text.length; i++){
+    const t = text[i]; let f = -1;
+    for (let j = c; j < Math.min(S.length, c + 10); j++){
+      if (S[j] === t && (j - c <= 1 || (i + 1 < text.length && S[j+1] === text[i+1]))){ f = j; break; }
+    }
+    if (f < 0 && run.length >= 2){
+      const tri = text.slice(i - 2, i + 1), p = S.indexOf(tri, c);
+      if (p >= 0 && p - c < 90){ push(c, p, run.slice(0, -2)); c = p + 3; matched += 3; run = ''; continue; }
+    }
+    if (f >= 0){ push(c, f, run); run = ''; c = f + 1; matched++; }
+    else run += t;
+  }
+  return { c, matched, ev, tail: run };
+}
+async function startSR(){
+  if (!SRClass) return;
+  if (stopping) await stopping;
+  if (!running || paused || !take || take.mode !== 'voice') return;
+  srWanted = true;
+  const me = new SRClass(); sr = me;
+  me.lang = 'zh-CN'; me.continuous = true; me.interimResults = true; me.maxAlternatives = 1;
+  const my = sess = { start: committed, c: committed, fin: '', ev: [], tail: '', matched: 0, closed: false };
+  me.onresult = e => {
+    if (sr !== me || my.closed || !running || paused) return;
+    let fin = '', all = '';
+    for (let i = 0; i < e.results.length; i++){
+      const tx = e.results[i][0].transcript, na = norm(all);
+      // some browsers (iOS Safari) repeat earlier text inside later results: treat those as cumulative
+      if (na && norm(tx).startsWith(na)){ all = tx; if (e.results[i].isFinal) fin = tx; }
+      else { all += tx; if (e.results[i].isFinal) fin += tx; }
+    }
+    const rf = align(my.start, norm(fin)), ra = align(my.start, norm(all));
+    Object.assign(my, { fin, c: rf.c, ev: rf.ev, tail: rf.tail, matched: rf.matched });
+    for (let i = my.start; i < Math.min(els.length, ra.c + 1); i++) els[i].classList.remove('miss');
+    for (const x of rf.ev) if (!numberish(x)) for (let k = x.a; k < x.b; k++) els[k] && els[k].classList.add('miss');
+    cursor = Math.max(rf.c, ra.c);
+  };
+  me.onerror = e => {
+    if (sr !== me) return;
+    if (e.error === 'no-speech' || e.error === 'aborted') return;
+    const msg = {
+      'network': '语音识别连不上服务。Chrome 的识别要访问 Google；在国内请改用 Edge 或 iPhone 的 Safari。已切换为匀速滚动，录音照常。',
+      'not-allowed': '麦克风或语音识别没有被允许。iPhone 请在“设置 → 通用 → 键盘”里打开“启用听写”，并允许网页使用麦克风。已切换为匀速滚动。',
+      'service-not-allowed': '这台设备不允许网页使用语音识别。iPhone 请打开“启用听写”和 Siri。已切换为匀速滚动。',
+      'audio-capture': '没有找到可用的麦克风。已切换为匀速滚动。'
+    }[e.error] || ('语音识别出错（' + e.error + '），已切换为匀速滚动。');
+    showNotice(msg);
+    if (take && take.mode === 'voice'){ closeSession(my); srWanted = false; take.mode = 'auto'; take.fellBack = true; frac = 0; hold = 0; syncTransport(); }
+  };
+  me.onend = () => {
+    closeSession(my);
+    if (me._resolve){ me._resolve(); me._resolve = null; }
+    if (sr === me && srWanted && running && !paused && take && take.mode === 'voice'){
+      setTimeout(() => { if (sr === me && srWanted) startSR(); }, 120);
+    }
+  };
+  try { me.start(); } catch(e){}
+}
+function closeSession(s){
+  if (!s || s.closed) return;
+  s.closed = true;
+  events.push(...s.ev);
+  if (s.tail) events.push({ a: s.c, b: s.c, said: s.tail });
+  matchedTotal += s.matched;
+  committed = Math.max(committed, s.c);
+  finalsAll += s.fin + ' ';
+}
+function liveCommitted(){ return Math.max(committed, sess && !sess.closed ? sess.c : 0); }
+function stopSR(){
+  srWanted = false;
+  const me = sr, my = sess;
+  if (!me){ closeSession(my); return Promise.resolve(); }
+  const p = new Promise(res => {
+    me._resolve = res;
+    try { me.stop(); } catch(e){ res(); }
+    setTimeout(res, 1600);
+  }).then(() => { closeSession(my); if (stopping === p) stopping = null; });
+  stopping = p;
+  return p;
+}
+const CN_NUM = /^[零〇一二三四五六七八九十百千万亿两点]+$/;
+function numberish(e){ // "三十万" heard as "30万" is not a mistake
+  const said = norm(e.said || ''), exp = S.slice(e.a, e.b);
+  return !!said && !!exp && /^[\d.]+$/.test(said) && CN_NUM.test(exp);
+}
+
+/* ---------- finishing & report ---------- */
+async function finish(){
+  if (!running) return;
+  const t = take;
+  running = false; paused = false;
+  stopBtn.disabled = true; goBtn.disabled = true;
+  if (sr || sess) await stopSR();
+  const audio = await stopRecorder();
+  recorder = null;
+  if (t.stream) t.stream.getTracks().forEach(x => x.stop());
+  releaseWake();
+  const end = t.mode === 'voice' ? Math.min(R.length, committed) : Math.min(R.length, Math.floor(cursor));
+  const n = zi(t.startRi, end);
+  let speed;
+  if (t.mode === 'voice'){
+    const ta = firstReach(t.startRi, end), tb = lastReach(t.startRi, end);
+    speed = (tb - ta) > 2 ? n / (tb - ta + .4) * 60 : null;
+  } else speed = elapsed > 1 ? n / elapsed * 60 : null;
+  const fill = t.mode === 'voice' ? fillers(finalsAll, S.slice(t.startRi, end)) : [];
+  const rec = {
+    n: (takes.reduce((m, x) => Math.max(m, x.n || 0), 0)) + 1, at: Date.now(), mode: t.mode === 'voice' ? '跟声音' : (t.fellBack ? '匀速（识别失败）' : '匀速'),
+    level: ['全文', '半遮', '只留首字'][t.level], dur: elapsed, speed: speed && Math.round(speed), target: t.target,
+    match: t.mode === 'voice' && end > t.startRi ? Math.min(1, matchedTotal / (end - t.startRi)) : null,
+    fillers: fill.map(f => f.w + '×' + f.n).join('、'), done: end - t.startRi, total: R.length - t.startRi
+  };
+  takes.unshift(rec); takes = takes.slice(0, 40); store.set('kb.takes', takes);
+  if (audio) audioURLs[rec.n] = audio;
+  renderLog();
+  if (t.mode === 'voice') renderReport(buildReport(t, end, rec, fill), rec, audio);
+  else renderPlainReport(rec, audio);
+  copy.classList.add('idle'); scriptEl.readOnly = false; goBtn.disabled = false;
+  curEl && curEl.classList.remove('cur');
+  syncTransport();
+  $('#report').scrollIntoView({ behavior: 'smooth', block: 'nearest' });
+}
+function firstReach(a, b){ for (let i = a; i < b; i++) if (tReach[i] != null) return tReach[i]; return 0; }
+function lastReach(a, b){ for (let i = b - 1; i >= a; i--) if (tReach[i] != null) return tReach[i]; return 0; }
+const FILLERS = ['嗯', '呃', '额', '那个', '然后', '就是说', '就是', '其实', '对吧', '这个'];
+function fillers(said, script){
+  const out = [];
+  let s = said, sc = script;
+  for (const w of FILLERS){
+    const cs = s.split(w).length - 1, cc = sc.split(w).length - 1;
+    s = s.split(w).join(' '); sc = sc.split(w).join(' ');
+    if (cs - cc > 0) out.push({ w, n: cs - cc });
+  }
+  return out.sort((a, b) => b.n - a.n);
+}
+function buildReport(t, end, rec, fill){
+  const rows = [];
+  const subs = events.filter(e => (e.a < e.b || (e.said && norm(e.said))) && !numberish(e));
+  sentences.forEach((s, si) => {
+    if (s.b < t.startRi || s.a >= Math.max(end, t.startRi + 1)) return;
+    const tags = [], marks = new Set();
+    let missN = 0;
+    for (const e of subs){
+      if (e.a < s.a || e.a > s.b) continue;
+      const exp = S.slice(e.a, Math.min(e.b, s.b + 1));
+      let said = cleanFiller(e.said || '');
+      for (let k = e.a; k < Math.min(e.b, s.b + 1); k++) marks.add(k);
+      if (exp && said) tags.push({ c: 'bad', t: `“${origText(e.a, Math.min(e.b, s.b + 1))}”可能读成了“${said}”` });
+      else if (exp){ missN += exp.length; tags.push({ c: 'bad', t: `漏读“${origText(e.a, Math.min(e.b, s.b + 1))}”` }); }
+      else if (said) tags.push({ c: 'warn', t: `多说了“${said}”` });
+    }
+    if (s.a < end && s.b >= end) { tags.push({ c: 'warn', t: '这句没念完' }); for (let k = end; k <= s.b; k++) marks.add(k); }
+    const ta = tReach[s.a], tb = tReach[Math.min(s.b, end - 1)];
+    const n = zi(s.a, s.b + 1);
+    if (ta != null && tb != null && n >= 7 && tb > ta){
+      const sp = n / (tb - ta + .35) * 60, r = sp / t.target;
+      if (r > 1.22) tags.push({ c: 'warn', t: `偏快 ${Math.round(sp)} 字/分` });
+      else if (r < .72) tags.push({ c: 'warn', t: `偏慢 ${Math.round(sp)} 字/分` });
+    }
+    if (si > 0 && ta != null){
+      const prev = tReach[s.a - 1];
+      if (prev != null && ta - prev > 2.4) tags.push({ c: 'warn', t: `开口前停了 ${(ta - prev).toFixed(1)} 秒` });
+    }
+    let gap = 0;
+    for (let i = s.a + 1; i <= Math.min(s.b, end - 1); i++){
+      if (tReach[i] != null && tReach[i-1] != null && R[i-1].pause < .4) gap = Math.max(gap, tReach[i] - tReach[i-1]);
+    }
+    if (gap > 2) tags.push({ c: 'warn', t: `句中卡了约 ${gap.toFixed(1)} 秒` });
+    rows.push({ no: si + 1, s, marks, tags });
+  });
+  const reps = []; const re = /(\p{Script=Han}{2,6})\1/gu; let m;
+  while ((m = re.exec(finalsAll.replace(/\s/g, '')))) if (!S.includes(m[0])) reps.push(m[1]);
+  return { rows, reps };
+}
+function cleanFiller(s){ let x = norm(s); for (const w of FILLERS) x = x.split(w).join(''); return x; }
+function origText(a, b){ let out = ''; for (let i = a; i < b; i++) out += T[R[i].ti].ch; return out; }
+function sentHTML(s, marks){
+  let h = '';
+  for (let ti = R[s.a].ti; ti <= R[s.b].ti + 3 && ti < T.length; ti++){
+    const tk = T[ti];
+    if (ti > R[s.b].ti && tk.t !== 'p') break;
+    if (tk.t === 'c') h += marks.has(tk.ri) ? `<mark>${esc(tk.ch)}</mark>` : esc(tk.ch);
+    else if (tk.t === 'p') h += esc(tk.ch);
+  }
+  return h;
+}
+const audioURLs = {};
+function tagHTML(x){ return `<span class="pill ${x.c}">${esc(x.t)}</span>`; }
+function summaryPills(rec, extra){
+  const out = [];
+  out.push(`<span class="pill">用时 <b>${fmtShort(rec.dur)}</b></span>`);
+  if (rec.speed){
+    const r = rec.speed / rec.target, c = Math.abs(r - 1) <= .12 ? 'good' : 'warn';
+    out.push(`<span class="pill ${c}">平均 <b>${rec.speed}</b> 字/分 · 目标 ${rec.target}</span>`);
+  }
+  if (rec.match != null){ const c = rec.match >= .92 ? 'good' : rec.match >= .8 ? 'warn' : 'bad'; out.push(`<span class="pill ${c}">跟读吻合 <b>${Math.round(rec.match * 100)}%</b></span>`); }
+  if (rec.match != null) out.push(`<span class="pill ${rec.fillers ? 'warn' : 'good'}">${rec.fillers ? '口头禅 ' + esc(rec.fillers) : '没有口头禅'}</span>`);
+  if (rec.done < rec.total) out.push(`<span class="pill warn">念到第 <b>${rec.done}</b> / ${rec.total} 字</span>`);
+  return out.join('') + (extra || '');
+}
+function renderReport(rep, rec, audio){
+  const bad = rep.rows.filter(r => r.tags.length), good = rep.rows.length - bad.length;
+  const reps = rep.reps.length ? `<span class="pill warn">重复了：${esc(rep.reps.slice(0, 4).join('、'))}</span>` : '';
+  $('#report').innerHTML = `
+    <div class="hrow"><h2>第 ${rec.n} 条 · 逐句报告</h2><span class="caveat">${new Date(rec.at).toLocaleTimeString('zh-CN', { hour: '2-digit', minute: '2-digit' })} · ${rec.level}</span></div>
+    <div class="sum">${summaryPills(rec, reps)}</div>
+    ${audio ? `<audio controls src="${audio}"></audio>` : ''}
+    <div class="rows">${bad.map(r => `<div class="row"><div class="no">${String(r.no).padStart(2, '0')}</div><div class="tx">${sentHTML(r.s, r.marks)}</div><div class="tags">${r.tags.map(tagHTML).join('')}</div></div>`).join('')}</div>
+    <div class="okline">${bad.length ? `其余 ${good} 句没发现问题。` : `念到的 ${good} 句都没发现问题。`}</div>
+    <p class="caveat">“读错”和“漏读”来自语音识别比对，同音字、数字写法不同也会被标出来，回放录音确认一下。发音是否标准（前后鼻音、平翘舌）这里判断不了。</p>`;
+}
+function renderPlainReport(rec, audio){
+  $('#report').innerHTML = `
+    <div class="hrow"><h2>第 ${rec.n} 条</h2><span class="caveat">${rec.mode} · ${rec.level}</span></div>
+    <div class="sum">${summaryPills(rec)}</div>
+    ${audio ? `<audio controls src="${audio}"></audio><p class="caveat">听一遍回放，留意哪里吃字、哪里气不够。</p>` : ''}
+    <p class="caveat">匀速滚动只计时，不检查念得对不对。想要逐句纠错，把“滚动”切到“跟着声音”。${micHint()}</p>`;
+}
+function micHint(){ return framed ? '在线预览里麦克风被禁用，录音和纠错要用托管在 https 网站上的版本。' : ''; }
+function renderIntroReport(){
+  $('#report').innerHTML = `
+    <div class="hrow"><h2>逐句报告<span class="ex">示例</span></h2><span class="caveat">念完一遍，这里换成你的结果</span></div>
+    <div class="sum"><span class="pill">用时 <b>1:14</b></span><span class="pill warn">平均 <b>276</b> 字/分 · 目标 250</span><span class="pill warn">跟读吻合 <b>91%</b></span><span class="pill warn">口头禅 然后×2、那个×1</span></div>
+    <div class="rows">
+      <div class="row"><div class="no">04</div><div class="tx">一年就能毕业，时间成本低，总花费大概在三十万到四十万之间，比美国两年制省下<mark>将近</mark>一半。</div><div class="tags"><span class="pill bad">漏读“将近”</span><span class="pill warn">偏快 318 字/分</span></div></div>
+      <div class="row"><div class="no">09</div><div class="tx">只要是<mark>正规</mark>学校的全日制学位留服认证就完全没有问题。</div><div class="tags"><span class="pill bad">“正规”可能读成了“郑规”</span><span class="pill warn">句中卡了约 2.3 秒</span></div></div>
+    </div>
+    <div class="okline">其余 8 句没发现问题。</div>
+    <p class="caveat">切到“跟着声音”，提词器会跟着你念的进度走，念完生成这样的报告。${micHint()}</p>`;
+}
+
+/* ---------- log ---------- */
+const EXAMPLES = [
+  { n: 2, at: 0, mode: '跟声音', level: '半遮', dur: 74.2, speed: 262, target: 250, match: .94, fillers: '然后×2', ex: true },
+  { n: 1, at: 0, mode: '跟声音', level: '全文', dur: 81.5, speed: 231, target: 250, match: .88, fillers: '那个×3、然后×1', ex: true }
+];
+function scale(sp, tg){
+  if (!sp) return '';
+  const p = v => Math.max(0, Math.min(100, (v - 120) / 280 * 100));
+  const off = Math.abs(sp / tg - 1) > .12;
+  return `<span class="scale" aria-hidden="true"><span class="tg" style="left:${p(tg)}%"></span><span class="dot${off ? ' off' : ''}" style="left:${p(sp)}%"></span></span>`;
+}
+function renderLog(){
+  const list = takes.length ? takes : EXAMPLES;
+  $('#logBody').innerHTML = list.map(t => `<tr class="${t.ex ? 'sample' : ''}">
+    <td class="num">#${t.n}${t.ex ? '<span class="ex">示例</span>' : ''}</td>
+    <td class="num">${t.at ? new Date(t.at).toLocaleString('zh-CN', { month: 'numeric', day: 'numeric', hour: '2-digit', minute: '2-digit' }) : '—'}</td>
+    <td>${esc(t.mode)}</td><td>${esc(t.level)}</td>
+    <td class="num">${fmtShort(t.dur)}</td>
+    <td class="num">${t.speed ? t.speed + ' / ' + t.target : '—'}${scale(t.speed, t.target)}</td>
+    <td class="num">${t.match != null ? Math.round(t.match * 100) + '%' : '—'}</td>
+    <td>${t.match != null ? (esc(t.fillers || '') || '无') : '—'}</td>
+    <td>${audioURLs[t.n] ? `<audio controls src="${audioURLs[t.n]}" style="width:180px"></audio>` : '<span style="color:var(--muted)">—</span>'}</td></tr>`).join('');
+  $('#clearLog').disabled = !takes.length;
+}
+
+/* ---------- sheet ---------- */
+function analyse(){
+  parse(scriptEl.value);
+  tm = timing(st.cpm);
+  $('#sZi').textContent = zi(0, R.length);
+  $('#sJu').textContent = sentences.length;
+  $('#sDur').textContent = fmtShort(tm.total);
+  // breath check: clauses longer than 20 spoken units without a pause
+  const warns = []; let a = 0;
+  for (let i = 0; i < R.length; i++){
+    const end = i === R.length - 1 || R[i].pause >= .18;
+    if (end){ const n = zi(a, i + 1); if (n > 20) warns.push({ n, text: origText(a, i + 1) }); a = i + 1; }
+  }
+  $('#warns').innerHTML = warns.slice(0, 4).map(w => `<div class="w">一口气 ${w.n} 字：<q>${esc(w.text.length > 16 ? w.text.slice(0, 16) + '…' : w.text)}</q>，可以加个 <code>/</code> 换气</div>`).join('');
+  renderPrompter();
+  drawClock();
+}
+let debounce;
+scriptEl.addEventListener('input', () => { clearTimeout(debounce); debounce = setTimeout(() => { store.set('kb.script', scriptEl.value); cursor = 0; analyse(); vp.scrollTop = 0; }, 250); });
+$('#loadSample').addEventListener('click', () => { if (running) return; scriptEl.value = SEED; store.set('kb.script', SEED); cursor = 0; analyse(); vp.scrollTop = 0; });
+
+/* ---------- controls ---------- */
+function savePrefs(){ store.set('kb.prefs', st); }
+function setCpm(v){
+  st.cpm = Math.max(120, Math.min(400, Math.round(v / 10) * 10));
+  $('#cpm').value = st.cpm; $('#cpmV').textContent = st.cpm + ' 字/分';
+  document.querySelectorAll('#presets .chip').forEach(b => b.setAttribute('aria-pressed', String(+b.dataset.v === st.cpm)));
+  tm = timing(st.cpm); $('#sDur').textContent = fmtShort(tm.total); drawClock(); savePrefs();
+}
+$('#cpm').addEventListener('input', e => setCpm(+e.target.value));
+$('#presets').addEventListener('click', e => { const b = e.target.closest('.chip'); if (b) setCpm(+b.dataset.v); });
+function setFs(v){ st.fs = v; $('#fs').value = v; copy.style.setProperty('--fs', v + 'px'); sizeVP(); savePrefs(); }
+$('#fs').addEventListener('input', e => setFs(+e.target.value));
+function setMirror(v){ st.mirror = v; $('#mirror').checked = v; copy.classList.toggle('mirror', v); savePrefs(); }
+$('#mirror').addEventListener('change', e => setMirror(e.target.checked));
+$('#rec').addEventListener('change', e => { st.rec = e.target.checked; savePrefs(); });
+function segSet(id, v){ document.querySelectorAll(id + ' button').forEach(b => b.setAttribute('aria-pressed', String(b.dataset.v === String(v)))); }
+$('#followSeg').addEventListener('click', e => { const b = e.target.closest('button'); if (!b || b.disabled || running) return; st.follow = b.dataset.v; segSet('#followSeg', st.follow); savePrefs(); if (st.follow === 'voice' && framed) showNotice('在线预览里麦克风被浏览器禁用，“跟着声音”会自动退回匀速滚动。录音和纠错要用放在 https 网站上的版本（iPhone 用 Safari 打开即可）。'); });
+$('#levelSeg').addEventListener('click', e => { const b = e.target.closest('button'); if (!b || running) return; st.level = +b.dataset.v; segSet('#levelSeg', st.level); savePrefs(); renderPrompter(); });
+goBtn.addEventListener('click', onGo);
+stopBtn.addEventListener('click', finish);
+$('#rewind').addEventListener('click', () => { if (running) return; cursor = 0; els.forEach(e => e.classList.remove('miss')); paintCursor(true); vp.scrollTo({ top: 0, behavior: 'smooth' }); });
+copy.addEventListener('click', e => {
+  if (running) return;
+  const c = e.target.closest('.c'); if (!c) return;
+  const r = R[+c.dataset.r]; cursor = sentences[r.sent].a;
+  els.forEach(x => x.classList.remove('miss')); paintCursor(true);
+  vp.scrollTo({ top: targetScroll(), behavior: 'smooth' });
+});
+const full = $('#full');
+if (!document.fullscreenEnabled) full.hidden = true;
+full.addEventListener('click', () => { const g = $('#glass'); (document.fullscreenElement ? document.exitFullscreen() : g.requestFullscreen()).catch(() => {}); });
+document.addEventListener('fullscreenchange', () => setTimeout(sizeVP, 50));
+$('#clearLog').addEventListener('click', function(){
+  if (this.dataset.armed){ takes = []; store.set('kb.takes', takes); renderLog(); this.textContent = '清空记录'; delete this.dataset.armed; return; }
+  this.dataset.armed = '1'; this.textContent = '再点一次确认清空';
+  setTimeout(() => { if (this.dataset.armed){ delete this.dataset.armed; this.textContent = '清空记录'; } }, 3000);
+});
+document.addEventListener('keydown', e => {
+  if (e.target.closest('textarea,input,select,button,audio')) return;
+  if (e.code === 'Space'){ e.preventDefault(); onGo(); }
+  else if (e.key === 'ArrowUp'){ e.preventDefault(); setCpm(st.cpm + 10); }
+  else if (e.key === 'ArrowDown'){ e.preventDefault(); setCpm(st.cpm - 10); }
+  else if (e.key === 'Escape' && running) finish();
+});
+window.addEventListener('resize', sizeVP);
+
+/* ---------- notices, wake lock, offline copy ---------- */
+function showNotice(t){ $('#noticeTxt').textContent = t; $('#notice').hidden = false; }
+function showMicProblem(e){
+  if (framed) showNotice('在线预览里浏览器禁止使用麦克风，这一条改为匀速滚动、不录音。要录音和逐句纠错，请用托管在 https 网站上的版本（iPhone 用 Safari 打开）。');
+  else if (location.protocol === 'file:' && isIOS) showNotice('iPhone 不能直接打开本地文件使用麦克风。请把这个文件放到 https 网站上，再用 Safari 打开。');
+  else if (!window.isSecureContext) showNotice('麦克风只能在 https 网址下使用。请把这个页面放到 https 网站上再打开。');
+  else showNotice('麦克风没有打开。请在浏览器地址栏（iPhone：网址左边的“大小”按钮 → 网站设置）里允许使用麦克风，然后再点开始。');
+}
+let wl = null;
+async function wakeLock(){ try { wl = await navigator.wakeLock.request('screen'); } catch(e){} }
+function releaseWake(){ try { wl && wl.release(); } catch(e){} wl = null; }
+
+if (!SRClass){ const vb = document.querySelector('#followSeg [data-v="voice"]'); vb.disabled = true; vb.title = '这个浏览器没有语音识别，请用 iPhone 的 Safari、Edge 或 Chrome'; if (st.follow === 'voice') st.follow = 'auto'; }
+if (framed){
+  showNotice('提示：这是在线预览，提词器可以直接用。浏览器在这里禁用了麦克风，录音和逐句纠错需要把离线版放到 https 网站上，iPhone 用 Safari 打开。');
+  (async () => {
+    try {
+      const dl = window.claude && window.claude.use ? await window.claude.use('downloads') : null;
+      if (!dl) return;
+      const btn = $('#saveOffline'); btn.hidden = false;
+      btn.addEventListener('click', async () => {
+        const html = PRISTINE.replace(SEED, () => scriptEl.value.replace(/<\/script/gi, '<\\/script'));
+        try { await dl.save({ filename: '口播练习台.html', data: html }); btn.textContent = '已保存'; }
+        catch(err){ if (err && err.code === 'unavailable') btn.hidden = true; }
+      });
+    } catch(e){}
+  })();
+}
+
+/* ---------- boot ---------- */
+setCpm(st.cpm); setFs(st.fs); setMirror(st.mirror);
+$('#rec').checked = st.rec; segSet('#followSeg', st.follow); segSet('#levelSeg', st.level);
+analyse(); renderLog(); renderIntroReport(); syncTransport();
+requestAnimationFrame(loop);
+})();
+</script>
+</body></html>
