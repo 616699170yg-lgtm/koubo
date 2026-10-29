@@ -1,4 +1,4 @@
-<!doctype html><html lang="zh-CN"><head><meta charset="utf-8"><meta name="viewport" content="width=device-width,initial-scale=1,viewport-fit=cover"><style>:root{color-scheme:light;padding-top:env(safe-area-inset-top,0px);padding-bottom:env(safe-area-inset-bottom,0px)}body{margin:0;font:14px system-ui,sans-serif}img{max-width:100%}[hidden]{display:none!important}</style></head><body><title>口播练习台</title>
+<!doctype html><html lang="zh-CN"><head><meta charset="utf-8"><meta name="viewport" content="width=device-width,initial-scale=1,maximum-scale=1,viewport-fit=cover"><style>:root{color-scheme:light;padding-top:env(safe-area-inset-top,0px);padding-bottom:env(safe-area-inset-bottom,0px)}body{margin:0;font:14px system-ui,sans-serif}img{max-width:100%}[hidden]{display:none!important}</style></head><body><title>口播练习台</title>
 <meta name="claude:viewport-fit-sides" content="cover">
 <meta name="apple-mobile-web-app-capable" content="yes">
 <meta name="apple-mobile-web-app-title" content="口播练习台">
@@ -23,7 +23,7 @@
   --bg:#111419; --surface:#191D25; --sunk:#14171D; --ink:#E5E8EE; --muted:#97A0AF; --line:#2A303B;
   --tally:#FF5B4B; --tally-soft:#3A1C1A; --cue:#E3AA3D; --cue-soft:#33280F; --ok:#4EB487; --ok-soft:#14301F; color-scheme:dark}
 
-*{box-sizing:border-box}
+*{box-sizing:border-box;touch-action:manipulation}
 [hidden]{display:none!important}
 body{background:var(--bg);color:var(--ink);font-family:var(--f-body);font-size:15px;line-height:1.6;
   padding-left:max(16px,env(safe-area-inset-left,0px));padding-right:max(16px,env(safe-area-inset-right,0px));padding-block:0 40px}
@@ -112,7 +112,7 @@ input[type=range]{accent-color:var(--ink);width:120px}
 .sheet .card{padding:16px;display:flex;flex-direction:column;gap:14px}
 h2{font-family:var(--f-display);font-size:17px;font-weight:900;margin:0;letter-spacing:.03em;text-wrap:balance}
 .hrow{display:flex;justify-content:space-between;align-items:baseline;gap:10px;flex-wrap:wrap}
-textarea#script{width:100%;min-height:260px;resize:vertical;border:1px solid var(--line);border-radius:8px;background:var(--sunk);padding:12px;line-height:1.8;font-size:15px}
+textarea#script{width:100%;min-height:260px;resize:vertical;border:1px solid var(--line);border-radius:8px;background:var(--sunk);padding:12px;line-height:1.8;font-size:16px}
 textarea#script[readonly]{opacity:.6}
 .stats{display:grid;grid-template-columns:repeat(3,minmax(0,1fr));gap:8px}
 .stat{background:var(--sunk);border-radius:8px;padding:8px 10px}
@@ -127,7 +127,7 @@ textarea#script[readonly]{opacity:.6}
 
 .share{border-top:1px solid var(--line);padding-top:12px;display:grid;gap:8px}
 .share p{margin:0;font-size:13px;color:var(--muted)}
-#shareOut{width:100%;font-family:var(--f-mono);font-size:12px;border:1px solid var(--line);border-radius:6px;background:var(--sunk);padding:6px 8px;color:var(--ink)}
+#shareOut{width:100%;font-family:var(--f-mono);font-size:16px;border:1px solid var(--line);border-radius:6px;background:var(--sunk);padding:6px 8px;color:var(--ink)}
 /* report */
 .report{padding:16px;display:flex;flex-direction:column;gap:12px}
 .sum{display:flex;flex-wrap:wrap;gap:8px}
@@ -732,6 +732,7 @@ async function finish(){
   copy.classList.add('idle'); scriptEl.readOnly = false; goBtn.disabled = false;
   $('#glassnote').hidden = false; $('#heard').hidden = true;
   curEl && curEl.classList.remove('cur');
+  cursor = t.startRi; paintCursor(true); vp.scrollTo({ top: targetScroll(), behavior: 'smooth' });
   syncTransport();
   $('#report').scrollIntoView({ behavior: 'smooth', block: 'nearest' });
 }
@@ -1173,7 +1174,30 @@ $('#followSeg').addEventListener('click', e => { const b = e.target.closest('but
 $('#levelSeg').addEventListener('click', e => { const b = e.target.closest('button'); if (!b || running) return; st.level = +b.dataset.v; segSet('#levelSeg', st.level); savePrefs(); renderPrompter(); });
 goBtn.addEventListener('click', onGo);
 stopBtn.addEventListener('click', finish);
-$('#rewind').addEventListener('click', () => { if (running) return; cursor = 0; els.forEach(e => e.classList.remove('miss')); paintCursor(true); vp.scrollTo({ top: 0, behavior: 'smooth' }); });
+// stop a take without saving it (used by "回到开头" while reading)
+function abortTake(){
+  if (!running) return;
+  const t = take;
+  running = false; paused = false; srWanted = false;
+  if (sr){ try { sr.onresult = sr.onend = sr.onerror = null; sr.abort ? sr.abort() : sr.stop(); } catch(e){} }
+  sr = null; sess = null; stopping = null;
+  if (recorder && recorder.state !== 'inactive'){ try { recorder.ondataavailable = recorder.onstop = null; recorder.stop(); } catch(e){} }
+  recorder = null;
+  if (t.stream) t.stream.getTracks().forEach(x => x.stop());
+  if (t.meter){ try { t.meter.ctx.close(); } catch(e){} }
+  releaseWake();
+  copy.classList.remove('voice');
+  copy.classList.add('idle'); scriptEl.readOnly = false; goBtn.disabled = false;
+  $('#glassnote').hidden = false; $('#heard').hidden = true;
+  syncTransport();
+}
+function toStart(){
+  cursor = 0; elapsed = 0; drawClock();
+  els.forEach(e => e.classList.remove('miss', 'cs', 'cur'));
+  paintCursor(true);
+  vp.scrollTo({ top: 0, behavior: 'smooth' });
+}
+$('#rewind').addEventListener('click', () => { abortTake(); toStart(); });
 copy.addEventListener('click', e => {
   if (running) return;
   const c = e.target.closest('.c'); if (!c) return;
