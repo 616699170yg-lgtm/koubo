@@ -132,6 +132,17 @@ textarea#script[readonly]{opacity:.6}
 .share{border-top:1px solid var(--line);padding-top:12px;display:grid;gap:8px}
 .share p{margin:0;font-size:13px;color:var(--muted)}
 #shareOut{width:100%;font-family:var(--f-mono);font-size:16px;border:1px solid var(--line);border-radius:6px;background:var(--sunk);padding:6px 8px;color:var(--ink)}
+#xfForm{display:grid;gap:8px}
+#xfForm input:not([type=checkbox]){width:100%;font:16px var(--f-mono);border:1px solid var(--line);border-radius:6px;background:var(--sunk);padding:8px 10px;color:var(--ink)}
+.xfstatus{font-size:13px;margin:0;color:var(--muted)}
+.xfstatus.ok{color:var(--ok)} .xfstatus.bad{color:var(--tally)}
+#xfBlock:not(:empty){border-top:2px solid var(--line);padding-top:12px;display:grid;gap:10px}
+.xfrow .tx span.e-tone{color:var(--cue);text-decoration:underline wavy var(--cue);text-underline-offset:4px}
+.xfrow .tx span.e-phone{color:var(--tally);text-decoration:underline wavy var(--tally);text-underline-offset:4px}
+.xfrow .tx span.e-miss{color:var(--muted);text-decoration:line-through}
+.xfrow .tx span.e-add{color:var(--tally);font-style:italic}
+.xfbar{height:6px;background:var(--sunk);border-radius:3px;overflow:hidden}
+.xfbar i{display:block;height:100%;width:0;background:var(--ink);transition:width .2s}
 /* report */
 .report{padding:16px;display:flex;flex-direction:column;gap:12px}
 .sum{display:flex;flex-wrap:wrap;gap:8px}
@@ -266,6 +277,18 @@ tr.sample td{color:var(--muted)}
         <p>生成一个带着这篇稿子的链接，重音和停顿标记都在里面。对方打开就能直接念，念完的检查在他自己手机上做，不花任何人的额度。</p>
         <div class="transport"><button class="btn small" id="shareBtn">复制分享链接</button><button class="btn small" id="sysShare" hidden>发送给…</button></div>
         <input id="shareOut" readonly hidden aria-label="分享链接">
+      </div>
+      <div class="share" id="xfBox">
+        <span class="lbl">讯飞发音评测（可选）</span>
+        <p id="xfIntro">填上讯飞开放平台“语音评测（流式版）”的三个参数，念完就能查出哪个字的声母、韵母、声调读错了。参数只保存在这台设备的浏览器里，不会放进分享链接。每念一遍用一次讯飞额度，新用户每天免费 500 次。需要打开“录音回放”。</p>
+        <div class="xfform" id="xfForm">
+          <input id="xfApp" placeholder="APPID" autocomplete="off" spellcheck="false" aria-label="讯飞 APPID">
+          <input id="xfKey" placeholder="APIKey" autocomplete="off" spellcheck="false" aria-label="讯飞 APIKey">
+          <input id="xfSecret" type="password" placeholder="APISecret" autocomplete="off" spellcheck="false" aria-label="讯飞 APISecret">
+          <div class="transport"><button class="btn small" id="xfSave">保存</button><button class="btn small" id="xfTest">测试连接</button><button class="btn small" id="xfClear">清除</button></div>
+          <label class="chk"><input type="checkbox" id="xfAuto" checked>念完自动评测</label>
+        </div>
+        <p id="xfStatus" class="xfstatus"></p>
       </div>
     </div>
   </aside>
@@ -620,11 +643,13 @@ function startRecorder(stream){
   recorder.ondataavailable = e => { if (e.data && e.data.size) chunks.push(e.data); };
   try { recorder.start(1000); } catch(e){ recorder = null; }
 }
+let lastAudioBlob = null;
 function stopRecorder(){
+  lastAudioBlob = null;
   return new Promise(res => {
     if (!recorder || recorder.state === 'inactive'){ res(null); return; }
     const r = recorder;
-    r.onstop = () => res(chunks.length ? URL.createObjectURL(new Blob(chunks, { type: r.mimeType || 'audio/webm' })) : null);
+    r.onstop = () => { if (!chunks.length){ lastAudioBlob = null; res(null); return; } lastAudioBlob = new Blob(chunks, { type: r.mimeType || 'audio/webm' }); res(URL.createObjectURL(lastAudioBlob)); };
     try { r.stop(); } catch(e){ res(null); }
     setTimeout(() => res(null), 2500);
   });
@@ -766,6 +791,7 @@ async function finish(){
   renderLog();
   if (t.mode === 'voice') renderReport(buildReport(t, end, rec, fill), rec, audio);
   else renderPlainReport(rec, audio);
+  xfAfterTake(t, end, audio ? lastAudioBlob : null);
   copy.classList.add('idle'); scriptEl.readOnly = false; goBtn.disabled = false;
   $('#heard').hidden = true;
   curEl && curEl.classList.remove('cur');
@@ -1011,14 +1037,16 @@ function renderReport(rep, rec, audio){
     <div class="rows">${bad.map(r => `<div class="row"><div class="no">${String(r.no).padStart(2, '0')}</div><div class="tx">${sentHTML(r.s, r.marks)}</div>${r.spark ? `<div class="sk">${r.spark}</div>` : ''}<div class="tags">${r.tags.map(tagHTML).join('')}</div></div>`).join('')}</div>
     <div class="okline">${bad.length ? `其余 ${good} 句没发现问题。` : `念到的 ${good} 句都没发现问题。`}</div>
     ${rep.audio ? '<p class="caveat">波形是这句话的音量起伏：金色块是重音词的位置，底部红线是较长的停顿，虚线以下算没出声。</p>' : '<p class="caveat">这次没拿到音量数据，断句和重音没有检查。</p>'}
-    <p class="caveat">“读错”和“漏读”是按读音和稿子比对的，同音字不算错，但识别本身出错时也会被标出来。断句和重音是按音量和识别时间估算的，位置可能差一两个字，回放录音确认一下。发音是否标准（前后鼻音、平翘舌）这里判断不了。识别跟不上时，可以关掉“录音回放”再试（断句和重音检测会一起关掉）。</p>`;
+    <p class="caveat">“读错”和“漏读”是按读音和稿子比对的，同音字不算错，但识别本身出错时也会被标出来。断句和重音是按音量和识别时间估算的，位置可能差一两个字，回放录音确认一下。发音是否标准（前后鼻音、平翘舌）这里判断不了。识别跟不上时，可以关掉“录音回放”再试（断句和重音检测会一起关掉）。</p>
+    <div id="xfBlock"></div>`;
 }
 function renderPlainReport(rec, audio){
   $('#report').innerHTML = `
     <div class="hrow"><h2>第 ${rec.n} 条</h2><span class="caveat">${rec.mode} · ${rec.level}</span></div>
     <div class="sum">${summaryPills(rec)}</div>
     ${audio ? `<audio controls src="${audio}"></audio><p class="caveat">听一遍回放，留意哪里吃字、哪里气不够。</p>` : ''}
-    <p class="caveat">匀速滚动只计时，不检查念得对不对。想要逐句纠错，把“滚动”切到“跟着声音”。${micHint()}</p>`;
+    <p class="caveat">匀速滚动只计时，不检查念得对不对。想要逐句纠错，把“滚动”切到“跟着声音”。${micHint()}</p>
+    <div id="xfBlock"></div>`;
 }
 function micHint(){ return framed ? '在线预览里麦克风被禁用，录音和纠错要用托管在 https 网站上的版本。' : ''; }
 function renderIntroReport(){
@@ -1390,6 +1418,225 @@ async function loadFromHash(){
 loadFromHash();
 // a link opened in a tab that already shows this page only changes the hash, without reloading
 window.addEventListener('hashchange', loadFromHash);
+
+/* ---------- iFLYTEK pronunciation assessment (语音评测 流式版) ----------
+   The three keys live only in this browser (localStorage). After a take, the recording is decoded,
+   resampled to 16 kHz 16-bit mono PCM and streamed over WebSocket; the XML result is parsed into
+   per-character initial / final / tone errors plus omissions, insertions and repeats. */
+const XF_HOST = 'ise-api.xfyun.cn', XF_PATH = '/v2/open-ise';
+const xf = { keys: store.get('kb.xf', null), auto: store.get('kb.xfAuto', true), busy: false };
+const b64std = bytes => { let s = ''; for (let i = 0; i < bytes.length; i += 0x8000) s += String.fromCharCode.apply(null, bytes.subarray(i, i + 0x8000)); return btoa(s); };
+const fromB64 = str => { const s = atob(str); const out = new Uint8Array(s.length); for (let i = 0; i < s.length; i++) out[i] = s.charCodeAt(i); return out; };
+const sleep = ms => new Promise(r => setTimeout(r, ms));
+async function xfUrl(k){
+  const date = new Date().toUTCString();
+  const origin = `host: ${XF_HOST}\ndate: ${date}\nGET ${XF_PATH} HTTP/1.1`;
+  const key = await crypto.subtle.importKey('raw', new TextEncoder().encode(k.secret), { name: 'HMAC', hash: 'SHA-256' }, false, ['sign']);
+  const sig = b64std(new Uint8Array(await crypto.subtle.sign('HMAC', key, new TextEncoder().encode(origin))));
+  const auth = btoa(`api_key="${k.key}", algorithm="hmac-sha256", headers="host date request-line", signature="${sig}"`);
+  return `wss://${XF_HOST}${XF_PATH}?authorization=${encodeURIComponent(auth)}&date=${encodeURIComponent(date)}&host=${XF_HOST}`;
+}
+async function toPCM16k(blob){
+  const AC2 = window.AudioContext || window.webkitAudioContext;
+  const ctx = new AC2();
+  const buf = await blob.arrayBuffer();
+  const audio = await new Promise((res, rej) => { const p = ctx.decodeAudioData(buf, res, rej); if (p && p.then) p.then(res, rej); });
+  try { ctx.close(); } catch(e){}
+  const chs = []; for (let c = 0; c < audio.numberOfChannels; c++) chs.push(audio.getChannelData(c));
+  const ratio = audio.sampleRate / 16000, n = Math.floor(audio.length / ratio);
+  const pcm = new Int16Array(n);
+  for (let i = 0; i < n; i++){
+    const x = i * ratio, i0 = Math.floor(x), f = x - i0;
+    let v = 0;
+    for (const ch of chs) v += ch[i0] + ((ch[i0 + 1] !== undefined ? ch[i0 + 1] : ch[i0]) - ch[i0]) * f;
+    v /= chs.length;
+    pcm[i] = Math.max(-32768, Math.min(32767, Math.round(v * 32767)));
+  }
+  return pcm;
+}
+const XF_ERR = {
+  10313: 'APPID 和 APIKey 对不上，请检查是不是同一个应用的参数',
+  11200: '这个应用没有开通“语音评测”，或者免费额度已经用完',
+  11201: '今天的调用次数已经用完',
+  10163: '发送的数据格式不对',
+  10160: '发送的数据格式不对',
+  10165: '会话已失效，请重试',
+  40006: '参数不对，请重试',
+  48195: '稿子里有讯飞不认识的字符'
+};
+function xfEvaluate(pcm, text, k, onProgress){
+  return new Promise(async (resolve, reject) => {
+    let ws, done = false;
+    const fail = (code, message) => { if (done) return; done = true; try { ws && ws.close(); } catch(e){} reject({ code, message }); };
+    try { ws = new WebSocket(await xfUrl(k)); } catch(e){ return fail('url', '无法生成连接地址：' + (e.message || e)); }
+    const timer = setTimeout(() => fail('timeout', '讯飞长时间没有回应'), 90000);
+    ws.onopen = async () => {
+      ws.send(JSON.stringify({
+        common: { app_id: k.appid },
+        business: { sub: 'ise', ent: 'cn_vip', category: 'read_chapter', cmd: 'ssb', text: '\uFEFF' + text, tte: 'utf-8', ttp_skip: true, aue: 'raw', auf: 'audio/L16;rate=16000', rstcd: 'utf8' },
+        data: { status: 0, data: '' }
+      }));
+      const bytes = new Uint8Array(pcm.buffer, pcm.byteOffset, pcm.byteLength), FR = 6400; // 0.2 s of audio per frame, sent every 40 ms
+      const total = Math.max(1, Math.ceil(bytes.length / FR));
+      for (let i = 0; i < total; i++){
+        if (done || ws.readyState !== 1) return;
+        const last = i === total - 1;
+        const chunk = bytes.subarray(i * FR, Math.min(bytes.length, (i + 1) * FR));
+        ws.send(JSON.stringify({ business: { cmd: 'auw', aus: last ? 4 : (i === 0 ? 1 : 2), aue: 'raw' }, data: { status: last ? 2 : 1, data: b64std(chunk) } }));
+        if (onProgress) onProgress((i + 1) / total);
+        await sleep(40);
+      }
+    };
+    ws.onmessage = e => {
+      let m; try { m = JSON.parse(e.data); } catch(err){ return; }
+      if (m.code !== 0){ clearTimeout(timer); return fail(m.code, (XF_ERR[m.code] || '讯飞返回错误') + `（错误码 ${m.code}${m.message ? '：' + m.message : ''}）`); }
+      if (m.data && m.data.status === 2 && m.data.data){
+        clearTimeout(timer); done = true; try { ws.close(); } catch(err){}
+        resolve(new TextDecoder().decode(fromB64(m.data.data)));
+      }
+    };
+    ws.onerror = () => { clearTimeout(timer); fail('ws', '连不上讯飞：请检查三个参数是否填对、手机时间是否准确（误差不能超过 5 分钟），以及网络是否正常'); };
+    ws.onclose = e => { clearTimeout(timer); fail('closed', `连接被讯飞关闭（${e.code}），多半是参数不对或时间不准`); };
+  });
+}
+const XF_EXCEPT = { 28673: '没有听到声音或音量太小', 28676: '念的内容和稿子差别太大', 28680: '背景噪音太大', 28690: '声音太大，录音爆音了' };
+function parseXF(xml){
+  const doc = new DOMParser().parseFromString(xml, 'text/xml');
+  const nodes = Array.from(doc.getElementsByTagName('read_chapter'));
+  const top = nodes.find(n => n.hasAttribute('total_score')) || nodes[nodes.length - 1];
+  if (!top) throw { code: 'xml', message: '看不懂讯飞返回的结果' };
+  const num = a => { const v = top.getAttribute(a); return v == null || v === '' ? null : +v; };
+  const out = {
+    total: num('total_score'), phone: num('phone_score'), tone: num('tone_score'), fluency: num('fluency_score'), integrity: num('integrity_score'),
+    rejected: top.getAttribute('is_rejected') === 'true', except: top.getAttribute('except_info'), sentences: []
+  };
+  for (const sen of Array.from(top.getElementsByTagName('sentence'))){
+    const sylls = [];
+    for (const sy of Array.from(sen.getElementsByTagName('syll'))){
+      const type = sy.getAttribute('rec_node_type');
+      const ch = sy.getAttribute('content') || '';
+      if (type && type !== 'paper') continue;      // sil / fil: pauses and noise
+      if (!ch || /^(sil|fil|silv|fill)$/i.test(ch)) continue;
+      const dp = +(sy.getAttribute('dp_message') || 0);
+      const issues = [];
+      if (dp === 16) issues.push('miss'); else if (dp === 32) issues.push('add'); else if (dp === 64) issues.push('repeat'); else if (dp === 128) issues.push('replace');
+      if (!dp){
+        for (const ph of Array.from(sy.getElementsByTagName('phone'))){
+          const yun = ph.getAttribute('is_yun') === '1', err = +(ph.getAttribute('perr_msg') || 0);
+          if (!err) continue;
+          if (!yun) issues.push('initial');
+          else { if (err === 1 || err === 3) issues.push('final'); if (err === 2 || err === 3) issues.push('tone'); }
+        }
+      }
+      sylls.push({ ch, py: sy.getAttribute('symbol') || '', issues });
+    }
+    out.sentences.push({ text: sen.getAttribute('content') || sylls.map(x => x.ch).join(''), sylls });
+  }
+  return out;
+}
+const pyMark = p => { // "zheng4" -> "zhèng"
+  const m = /^([a-zü:v]+)([1-5])$/i.exec(p); if (!m) return p;
+  const tones = { a: 'āáǎàa', o: 'ōóǒòo', e: 'ēéěèe', i: 'īíǐìi', u: 'ūúǔùu', 'ü': 'ǖǘǚǜü' };
+  let s = m[1].replace(/v|u:/g, 'ü'); const t = +m[2] - 1;
+  const v = /[ae]/.exec(s) ? /[ae]/.exec(s)[0] : (s.includes('ou') ? 'o' : (s.match(/[aeiouü](?!.*[aeiouü])/) || [''])[0]);
+  return v ? s.replace(v, tones[v][t]) : s;
+};
+function renderXF(r){
+  const box = $('#xfBlock'); if (!box) return;
+  const pill = (label, v) => v == null ? '' : `<span class="pill ${v >= 85 ? 'good' : v >= 70 ? 'warn' : 'bad'}">${label} <b>${Math.round(v * 10) / 10}</b></span>`;
+  const NAMES = { initial: '声母', final: '韵母', tone: '声调' };
+  let bad = 0, rows = '';
+  r.sentences.forEach((s, i) => {
+    const tags = [];
+    const html = s.sylls.map(x => {
+      if (!x.issues.length) return esc(x.ch);
+      const py = x.py ? pyMark(x.py) : '';
+      if (x.issues.includes('miss')){ tags.push({ c: 'bad', t: `漏读「${x.ch}」` }); return `<span class="e-miss">${esc(x.ch)}</span>`; }
+      if (x.issues.includes('add')){ tags.push({ c: 'warn', t: `多读了「${x.ch}」` }); return `<span class="e-add">${esc(x.ch)}</span>`; }
+      if (x.issues.includes('repeat')){ tags.push({ c: 'warn', t: `回读「${x.ch}」` }); return `<span class="e-add">${esc(x.ch)}</span>`; }
+      if (x.issues.includes('replace')){ tags.push({ c: 'bad', t: `「${x.ch}」读成了别的字` }); return `<span class="e-phone">${esc(x.ch)}</span>`; }
+      const what = x.issues.map(k => NAMES[k]).join('、');
+      tags.push({ c: x.issues.length === 1 && x.issues[0] === 'tone' ? 'warn' : 'bad', t: `「${x.ch}」${py} ${what}不准` });
+      return `<span class="${x.issues.every(k => k === 'tone') ? 'e-tone' : 'e-phone'}" title="${esc(py + ' ' + what + '不准')}">${esc(x.ch)}</span>`;
+    }).join('');
+    if (!tags.length) return;
+    bad++;
+    rows += `<div class="row xfrow"><div class="no">${String(i + 1).padStart(2, '0')}</div><div class="tx">${html}</div><div class="tags">${tags.slice(0, 8).map(tagHTML).join('')}${tags.length > 8 ? `<span class="pill">还有 ${tags.length - 8} 处</span>` : ''}</div></div>`;
+  });
+  const ex = r.except && r.except !== '0' ? `<p class="caveat">讯飞提示：${esc(XF_EXCEPT[r.except] || ('提示码 ' + r.except))}</p>` : '';
+  box.innerHTML = `
+    <div class="hrow"><h2>讯飞发音评测</h2><span class="caveat">满分 100</span></div>
+    <div class="sum">${pill('总分', r.total)}${pill('声韵', r.phone)}${pill('声调', r.tone)}${pill('流畅度', r.fluency)}${pill('完整度', r.integrity)}</div>
+    ${r.rejected ? '<p class="caveat" style="color:var(--tally)">讯飞判定这次录音和稿子对不上（可能是乱读或念的不是这篇），分数仅供参考。</p>' : ''}${ex}
+    <div class="rows">${rows}</div>
+    <div class="okline">${bad ? `其余 ${r.sentences.length - bad} 句发音没发现问题。` : `${r.sentences.length} 句发音都没发现问题。`}</div>
+    <p class="caveat">金色波浪线是声调不准，红色是声母或韵母不准，划掉的是漏读。英文单词不参与评测。</p>`;
+}
+// text sent to iFLYTEK: the sentences this take covered, markers removed, numbers spelled out, English words dropped
+function xfText(startRi, end){
+  if (!R.length) return '';
+  const a = sentences[R[Math.min(startRi, R.length - 1)].sent].a;
+  const b = sentences[R[Math.max(a, Math.min(end, R.length) - 1)].sent].b;
+  let s = '';
+  for (let ti = R[a].ti; ti <= R[b].ti + 3 && ti < T.length; ti++){
+    const tk = T[ti];
+    if (ti > R[b].ti && tk.t !== 'p') break;
+    if (tk.t === 'c' || tk.t === 'p') s += tk.ch; else if (tk.t === 'sp') s += ' ';
+  }
+  s = numCn(s).replace(/[A-Za-z][A-Za-z'’.+\-]*/g, '').replace(/[ \t]+/g, '').replace(/([，。！？、；：])[，。！？、；：]+/g, '$1').replace(/^[，。！？、；：]+/, '');
+  return s.slice(0, 1000);
+}
+function xfReady(){ return !!(xf.keys && xf.keys.appid && xf.keys.key && xf.keys.secret) && !framed && window.WebSocket && window.crypto && crypto.subtle; }
+async function xfRun(blob, text){
+  const box = $('#xfBlock'); if (!box || xf.busy) return;
+  xf.busy = true;
+  box.innerHTML = `<div class="hrow"><h2>讯飞发音评测</h2><span class="caveat" id="xfStep">正在处理录音…</span></div><div class="xfbar"><i id="xfProg"></i></div>`;
+  try {
+    const pcm = await toPCM16k(blob);
+    if (pcm.length < 16000 * .8) throw { code: 'short', message: '录音太短，没法评测' };
+    if (pcm.length > 16000 * 290) throw { code: 'long', message: '录音超过讯飞单次评测的 5 分钟上限，请分段念' };
+    $('#xfStep').textContent = '正在发给讯飞…';
+    const xml = await xfEvaluate(pcm, text, xf.keys, p => { const el = $('#xfProg'); if (el) el.style.width = Math.round(p * 100) + '%'; });
+    renderXF(parseXF(xml));
+  } catch(e){
+    box.innerHTML = `<div class="hrow"><h2>讯飞发音评测</h2></div><p class="caveat" style="color:var(--tally)">没评测成功：${esc(e && e.message ? String(e.message) : String(e))}</p>`;
+  } finally { xf.busy = false; }
+}
+function xfAfterTake(t, end, blob){
+  const box = $('#xfBlock'); if (!box) return;
+  if (!xfReady()) return;
+  if (!blob){ box.innerHTML = '<p class="caveat">这一条没有录音，讯飞评测需要打开“录音回放”。</p>'; return; }
+  const text = xfText(t.startRi, end);
+  if (!text){ return; }
+  if (xf.auto) xfRun(blob, text);
+  else {
+    box.innerHTML = '<div class="hrow"><h2>讯飞发音评测</h2><button class="btn small" id="xfGo">评测这一条</button></div>';
+    $('#xfGo').addEventListener('click', () => xfRun(blob, text));
+  }
+}
+(function xfSetup(){
+  const st2 = $('#xfStatus');
+  const say = (msg, cls) => { st2.textContent = msg; st2.className = 'xfstatus' + (cls ? ' ' + cls : ''); };
+  if (framed){ $('#xfForm').hidden = true; $('#xfIntro').textContent = '讯飞发音评测只能在 GitHub 网站版里用（Claude 里的版本不允许连接外部服务）。'; return; }
+  if (xf.keys){ $('#xfApp').value = xf.keys.appid; $('#xfKey').value = xf.keys.key; $('#xfSecret').value = xf.keys.secret; say('已保存，念完会用讯飞评测。', 'ok'); }
+  $('#xfAuto').checked = xf.auto !== false;
+  $('#xfAuto').addEventListener('change', e => { xf.auto = e.target.checked; store.set('kb.xfAuto', xf.auto); });
+  const read = () => ({ appid: $('#xfApp').value.trim(), key: $('#xfKey').value.trim(), secret: $('#xfSecret').value.trim() });
+  $('#xfSave').addEventListener('click', () => {
+    const k = read();
+    if (!k.appid || !k.key || !k.secret){ say('三个参数都要填。', 'bad'); return; }
+    xf.keys = k; store.set('kb.xf', k); say('已保存。建议点“测试连接”确认一下。', 'ok');
+  });
+  $('#xfClear').addEventListener('click', () => { xf.keys = null; store.set('kb.xf', null); $('#xfApp').value = $('#xfKey').value = $('#xfSecret').value = ''; say('已清除。'); });
+  $('#xfTest').addEventListener('click', async () => {
+    const k = read();
+    if (!k.appid || !k.key || !k.secret){ say('三个参数都要填。', 'bad'); return; }
+    say('正在连接讯飞…（会用掉 1 次额度）');
+    const pcm = new Int16Array(16000 * 1.5); for (let i = 0; i < pcm.length; i++) pcm[i] = (Math.random() - .5) * 60;
+    try { await xfEvaluate(pcm, '你好。', k); xf.keys = k; store.set('kb.xf', k); say('连接成功，参数已保存。念完一条就会看到讯飞的评测。', 'ok'); }
+    catch(e){ say('连接失败：' + (e && e.message ? e.message : e), 'bad'); }
+  });
+})();
 
 /* ---------- notices, wake lock, offline copy ---------- */
 function showNotice(t){ $('#noticeTxt').textContent = t; $('#notice').hidden = false; }
